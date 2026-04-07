@@ -239,7 +239,7 @@ def generate_examples_ui(pattern, language, count):
 
 
 def generate_exercises_ui(pattern, language, difficulty):
-    """生成练习题UI函数 - 选择题版本，每题带答题按钮"""
+    """生成练习题UI函数 - 选择题版本，直接显示答案"""
     if not pattern or not pattern.strip():
         return "请输入句型模板", ""
     
@@ -261,8 +261,6 @@ def generate_exercises_ui(pattern, language, difficulty):
 
 **预计时间**: {result.get('estimated_time', 'N/A')}
 
-💡 **点击选项即可答题，正确答案会显示绿色✓，错误显示红色✗**
-
 ---
 
 """
@@ -271,7 +269,7 @@ def generate_exercises_ui(pattern, language, difficulty):
             text += f"### 第{i}题\n\n"
             text += f"**{ex.get('question', '')}**\n\n"
             
-            # 显示选项，每个选项都是可点击的
+            # 显示选项，标记正确答案
             options = ex.get('options', {})
             correct_answer = ex.get('answer', '')
             
@@ -304,79 +302,6 @@ def generate_exercises_ui(pattern, language, difficulty):
         
     except Exception as e:
         return f"生成出错: {str(e)}", ""
-                'options': ex.get('options', {}),
-                'answer': ex.get('answer', ''),
-                'answer_text': ex.get('answer_text', ''),
-                'explanation': ex.get('explanation', ''),
-                'type': ex.get('type', 'choice')
-            })
-        
-        return text, json.dumps(qa_list, ensure_ascii=False)
-        
-    except Exception as e:
-        return f"生成出错: {str(e)}", ""
-        
-        return text, json.dumps(qa_list, ensure_ascii=False)
-        
-    except Exception as e:
-        return f"生成出错: {str(e)}", ""
-
-
-def check_answer_ui(question, user_answer):
-    """批改答案UI函数 - 简化版，AI自动判断"""
-    if not question or not user_answer:
-        return "请输入题目和你的答案"
-    
-    try:
-        # 让AI自动批改，不需要正确答案
-        result = check_answer(question, "", user_answer, "")
-        
-        status = "✅ 正确" if result.get('is_correct') else "❌ 有误"
-        
-        text = f"""## 📝 批改结果
-
-**状态**: {status}
-
-**得分**: {result.get('score', 'N/A')}/100
-
-**你的答案**: {user_answer}
-
----
-
-"""
-        
-        if result.get('detailed_feedback'):
-            text += f"**评语**: {result['detailed_feedback']}\n\n"
-        
-        if result.get('errors'):
-            text += "### 错误分析\n\n"
-            for err in result['errors']:
-                text += f"• **{err.get('type', '错误')}**: {err.get('description', '')}\n"
-                if err.get('suggestion'):
-                    text += f"  - 建议: {err['suggestion']}\n"
-            text += "\n"
-        
-        if result.get('strengths'):
-            text += "### 👍 优点\n\n"
-            for s in result['strengths']:
-                text += f"• {s}\n"
-            text += "\n"
-        
-        if result.get('improvements'):
-            text += "### 💡 改进建议\n\n"
-            for imp in result['improvements']:
-                text += f"• {imp}\n"
-            text += "\n"
-        
-        if result.get('learning_resources'):
-            text += "### 📚 相关学习资源\n\n"
-            for res in result['learning_resources']:
-                text += f"• {res}\n"
-        
-        return text
-        
-    except Exception as e:
-        return f"批改出错: {str(e)}"
 
 
 def get_patterns_ui(language, level):
@@ -538,9 +463,9 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
                 outputs=[examples_output]
             )
         
-        # ========== 练习题（含答题批改）==========
+        # ========== 练习题 ==========
         with gr.Tab("🎯 练习题"):
-            gr.Markdown("### 选择句型生成练习题，然后答题提交批改")
+            gr.Markdown("### 选择句型生成选择题，正确答案已用 ✓ 标记")
             with gr.Row():
                 with gr.Column(scale=1):
                     # 句型选择下拉框
@@ -638,7 +563,7 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
     💡 **使用提示**:
     - 输入任意英语或汉语句子即可自动分析其结构
     - 可以使用句型ID（如 en_001, zh_005）快速选择常见句型
-    - 系统会自动根据内容难度调整练习题目
+    - 练习题正确答案已用 ✓ 标记
     
     Powered by 百炼大模型 (Qwen)
     """)
