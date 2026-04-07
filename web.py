@@ -17,6 +17,31 @@ from learning_engine import (
 
 import gradio as gr
 
+# ============ 初始化示例 ============
+INITIAL_SENTENCE = "I love learning new languages."
+INITIAL_PATTERN = "en_001"  # 主谓宾结构
+
+def get_initial_analysis():
+    """获取初始示例分析结果"""
+    try:
+        return analyze_sentence_ui(INITIAL_SENTENCE)
+    except:
+        return "💡 输入句子开始分析", "", ""
+
+def get_initial_examples():
+    """获取初始例句"""
+    try:
+        return generate_examples_ui(INITIAL_PATTERN, "en", 3)
+    except:
+        return "💡 选择句型生成例句"
+
+def get_initial_exercises():
+    """获取初始练习题"""
+    try:
+        return generate_exercises_ui(INITIAL_PATTERN, "en", "")
+    except:
+        return "💡 选择句型生成练习题", ""
+
 # ============ 功能函数 ============
 
 def analyze_sentence_ui(sentence):
@@ -333,7 +358,7 @@ def get_patterns_ui(language, level):
             level_icon = {"beginner": "🟢", "intermediate": "🟡", "advanced": "🔴"}.get(p['level'], "⚪")
             level_text = {"beginner": "初级", "intermediate": "中级", "advanced": "高级"}.get(p['level'], p['level'])
             
-            text += f"**{lang_icon} {p['name']}** {level_icon}\n\n"
+            text += f"**{lang_icon} {p['name']}** `{p['id']}` {level_icon}\n\n"
             text += f"- 模板: `{p['pattern']}`\n"
             text += f"- 例句: {p['example']}\n"
             text += f"- 难度: {level_text} ({p['level']})\n\n"
@@ -408,15 +433,31 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
                     sentence_input = gr.Textbox(
                         label="输入句子",
                         placeholder="请输入要分析的英语或汉语句子...",
+                        value=INITIAL_SENTENCE,
                         lines=3
                     )
                     analyze_btn = gr.Button("🔍 分析句子", variant="primary")
                 
                 with gr.Column(scale=2):
-                    analysis_output = gr.Markdown(label="分析结果")
-                    components_output = gr.Markdown(label="句子成分")
-                    keywords_output = gr.Markdown(label="关键词汇")
+                    analysis_output = gr.Markdown(
+                        label="分析结果",
+                        value=get_initial_analysis()[0]
+                    )
+                    components_output = gr.Markdown(
+                        label="句子成分",
+                        value=get_initial_analysis()[1]
+                    )
+                    keywords_output = gr.Markdown(
+                        label="关键词汇",
+                        value=get_initial_analysis()[2]
+                    )
             
+            # 使用 submit 方法，每次点击都会显示加载状态
+            sentence_input.submit(
+                fn=analyze_sentence_ui,
+                inputs=[sentence_input],
+                outputs=[analysis_output, components_output, keywords_output]
+            )
             analyze_btn.click(
                 fn=analyze_sentence_ui,
                 inputs=[sentence_input],
@@ -455,7 +496,10 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
                     examples_btn = gr.Button("✨ 生成例句", variant="primary")
                 
                 with gr.Column(scale=2):
-                    examples_output = gr.Markdown(label="例句")
+                    examples_output = gr.Markdown(
+                        label="例句",
+                        value=get_initial_examples()
+                    )
             
             examples_btn.click(
                 fn=generate_examples_ui,
@@ -492,8 +536,14 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
             
             with gr.Row():
                 with gr.Column(scale=2):
-                    exercises_output = gr.Markdown(label="练习题")
-                    exercises_json = gr.Textbox(visible=False)
+                    exercises_output = gr.Markdown(
+                        label="练习题",
+                        value=get_initial_exercises()[0]
+                    )
+                    exercises_json = gr.Textbox(
+                        visible=False,
+                        value=get_initial_exercises()[1]
+                    )
             
             # 生成练习题
             exercises_btn.click(
