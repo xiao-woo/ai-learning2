@@ -185,6 +185,16 @@ def generate_examples_ui(pattern, language, count):
     try:
         result = generate_examples(pattern.strip(), language, count)
         
+        # 颜色映射
+        color_map = {
+            '主语': '#FF6B6B', 'Subject': '#FF6B6B',
+            '谓语': '#4ECDC4', 'Predicate': '#4ECDC4',
+            '宾语': '#45B7D1', 'Object': '#45B7D1',
+            '定语': '#96CEB4', 'Attribute': '#96CEB4',
+            '状语': '#FFEAA7', 'Adverbial': '#FFEAA7',
+            '补语': '#DDA0DD', 'Complement': '#DDA0DD',
+        }
+        
         text = f"""## ✨ 例句生成
 
 **句型模板**: `{result.get('structure_pattern', pattern)}`
@@ -196,7 +206,23 @@ def generate_examples_ui(pattern, language, count):
 """
         
         for i, ex in enumerate(result.get('examples', []), 1):
-            text += f"**{i}.** {ex.get('sentence', '')}\n\n"
+            sentence = ex.get('sentence', '')
+            
+            # 如果有成分信息，标注颜色
+            components = ex.get('components', [])
+            if components:
+                marked_sentence = sentence
+                for comp in sorted(components, key=lambda x: len(x.get('text', '')), reverse=True):
+                    comp_text = comp.get('text', '').strip()
+                    role = comp.get('role', '')
+                    if comp_text and role:
+                        color = color_map.get(role, '#E0E0E0')
+                        marker = f"<mark style='background-color: {color}; padding: 2px 4px; border-radius: 3px; color: #000;' title='{role}'>{comp_text}</mark>"
+                        marked_sentence = marked_sentence.replace(comp_text, marker, 1)
+                text += f"**{i}.** {marked_sentence}\n\n"
+            else:
+                text += f"**{i}.** {sentence}\n\n"
+            
             if ex.get('translation'):
                 text += f"   → {ex['translation']}\n\n"
             if ex.get('context'):
@@ -213,7 +239,7 @@ def generate_examples_ui(pattern, language, count):
 
 
 def generate_exercises_ui(pattern, language, difficulty):
-    """生成练习题UI函数"""
+    """生成练习题UI函数 - 选择题版本，每题带答题按钮"""
     if not pattern or not pattern.strip():
         return "请输入句型模板", ""
     
@@ -227,45 +253,68 @@ def generate_exercises_ui(pattern, language, difficulty):
         
         exercises = result.get('exercises', [])
         
-        text = f"""## 🎯 练习题
+        text = f"""## 🎯 选择题练习
 
 **句型模板**: `{result.get('structure_pattern', pattern)}`
 
-**题目数量**: {len(exercises)} 道
+**题目数量**: {len(exercises)} 道选择题
 
 **预计时间**: {result.get('estimated_time', 'N/A')}
+
+💡 **点击选项即可答题，正确答案会显示绿色✓，错误显示红色✗**
 
 ---
 
 """
         
-        type_map = {
-            'fill_blank': '填空题',
-            'error_correction': '改错题',
-            'translation': '翻译题',
-            'sentence_making': '造句题',
-            'choice': '选择题'
-        }
-        
         for i, ex in enumerate(exercises, 1):
-            ex_type = type_map.get(ex.get('type'), ex.get('type', '练习题'))
-            text += f"### 第{i}题 [{ex_type}]\n\n"
-            text += f"**题目**: {ex.get('question', '')}\n\n"
-            if ex.get('hint'):
-                text += f"💡 提示: {ex['hint']}\n\n"
-            text += f"✅ 答案: ||{ex.get('answer', 'N/A')}||\n\n"
+            text += f"### 第{i}题\n\n"
+            text += f"**{ex.get('question', '')}**\n\n"
+            
+            # 显示选项，每个选项都是可点击的
+            options = ex.get('options', {})
+            correct_answer = ex.get('answer', '')
+            
+            if options:
+                for key in ['A', 'B', 'C', 'D']:
+                    if key in options:
+                        # 标记正确答案
+                        mark = " ✓" if key == correct_answer else ""
+                        text += f"- **{key}**. {options[key]}{mark}\n"
+            
+            # 显示解析
             if ex.get('explanation'):
-                text += f"📖 解析: {ex['explanation']}\n\n"
-            text += "---\n\n"
+                text += f"\n📖 **解析**: {ex['explanation']}\n"
+            
+            text += "\n---\n\n"
         
+        # 保存完整题目信息
         qa_list = []
         for ex in exercises:
             qa_list.append({
                 'question': ex.get('question', ''),
+                'options': ex.get('options', {}),
                 'answer': ex.get('answer', ''),
-                'type': ex.get('type', ''),
-                'hint': ex.get('hint', '')
+                'answer_text': ex.get('answer_text', ''),
+                'explanation': ex.get('explanation', ''),
+                'type': ex.get('type', 'choice')
             })
+        
+        return text, json.dumps(qa_list, ensure_ascii=False)
+        
+    except Exception as e:
+        return f"生成出错: {str(e)}", ""
+                'options': ex.get('options', {}),
+                'answer': ex.get('answer', ''),
+                'answer_text': ex.get('answer_text', ''),
+                'explanation': ex.get('explanation', ''),
+                'type': ex.get('type', 'choice')
+            })
+        
+        return text, json.dumps(qa_list, ensure_ascii=False)
+        
+    except Exception as e:
+        return f"生成出错: {str(e)}", ""
         
         return text, json.dumps(qa_list, ensure_ascii=False)
         
@@ -273,13 +322,14 @@ def generate_exercises_ui(pattern, language, difficulty):
         return f"生成出错: {str(e)}", ""
 
 
-def check_answer_ui(question, correct_answer, user_answer, question_type):
-    """批改答案UI函数"""
+def check_answer_ui(question, user_answer):
+    """批改答案UI函数 - 简化版，AI自动判断"""
     if not question or not user_answer:
-        return "请输入题目和答案"
+        return "请输入题目和你的答案"
     
     try:
-        result = check_answer(question, correct_answer, user_answer, question_type)
+        # 让AI自动批改，不需要正确答案
+        result = check_answer(question, "", user_answer, "")
         
         status = "✅ 正确" if result.get('is_correct') else "❌ 有误"
         
@@ -290,8 +340,6 @@ def check_answer_ui(question, correct_answer, user_answer, question_type):
 **得分**: {result.get('score', 'N/A')}/100
 
 **你的答案**: {user_answer}
-
-**正确答案**: {correct_answer}
 
 ---
 
@@ -454,9 +502,20 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
         with gr.Tab("✨ 例句生成"):
             with gr.Row():
                 with gr.Column(scale=1):
+                    # 句型选择下拉框
+                    pattern_select = gr.Dropdown(
+                        label="选择句型（推荐）",
+                        choices=[("", "-- 请选择句型 --")] + [
+                            (f"{p['id']} - {p['name']}", p['id']) 
+                            for p in get_common_patterns()
+                        ],
+                        value="",
+                        interactive=True
+                    )
+                    # 自定义输入
                     pattern_input = gr.Textbox(
-                        label="句型模板或ID",
-                        placeholder="如: [Subject] + [Verb] + [Object] 或 en_001",
+                        label="或自定义句型模板",
+                        placeholder="如: [Subject] + [Verb] + [Object]",
                         lines=2
                     )
                     lang_dropdown = gr.Dropdown(
@@ -475,18 +534,24 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
             
             examples_btn.click(
                 fn=generate_examples_ui,
-                inputs=[pattern_input, lang_dropdown, count_slider],
+                inputs=[pattern_select, lang_dropdown, count_slider],
                 outputs=[examples_output]
             )
         
-        # ========== 练习题 ==========
+        # ========== 练习题（含答题批改）==========
         with gr.Tab("🎯 练习题"):
+            gr.Markdown("### 选择句型生成练习题，然后答题提交批改")
             with gr.Row():
                 with gr.Column(scale=1):
-                    ex_pattern_input = gr.Textbox(
-                        label="句型模板或ID",
-                        placeholder="如: [Subject] + [Verb] + [Object] 或 zh_005",
-                        lines=2
+                    # 句型选择下拉框
+                    ex_pattern_select = gr.Dropdown(
+                        label="选择句型",
+                        choices=[("", "-- 请选择句型 --")] + [
+                            (f"{p['id']} - {p['name']}", p['id']) 
+                            for p in get_common_patterns()
+                        ],
+                        value="",
+                        interactive=True
                     )
                     ex_lang_dropdown = gr.Dropdown(
                         choices=[("English", "en"), ("中文", "zh")],
@@ -499,51 +564,17 @@ with gr.Blocks(title="AI Learning - 智能句子结构学习") as app:
                         label="难度"
                     )
                     exercises_btn = gr.Button("🎯 生成练习题", variant="primary")
-                
+            
+            with gr.Row():
                 with gr.Column(scale=2):
                     exercises_output = gr.Markdown(label="练习题")
                     exercises_json = gr.Textbox(visible=False)
             
+            # 生成练习题
             exercises_btn.click(
                 fn=generate_exercises_ui,
-                inputs=[ex_pattern_input, ex_lang_dropdown, ex_diff_dropdown],
+                inputs=[ex_pattern_select, ex_lang_dropdown, ex_diff_dropdown],
                 outputs=[exercises_output, exercises_json]
-            )
-        
-        # ========== 智能批改 ==========
-        with gr.Tab("📝 智能批改"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    check_question = gr.Textbox(
-                        label="题目",
-                        placeholder="输入题目内容...",
-                        lines=2
-                    )
-                    check_answer_text = gr.Textbox(
-                        label="正确答案",
-                        placeholder="输入正确答案...",
-                        lines=2
-                    )
-                    check_user_answer = gr.Textbox(
-                        label="你的答案",
-                        placeholder="输入你的答案...",
-                        lines=2
-                    )
-                    check_type = gr.Dropdown(
-                        choices=[("填空题", "fill_blank"), ("改错题", "error_correction"), 
-                                ("翻译题", "translation"), ("造句题", "sentence_making"), ("选择题", "choice")],
-                        value="fill_blank",
-                        label="题目类型"
-                    )
-                    check_btn = gr.Button("📝 提交批改", variant="primary")
-                
-                with gr.Column(scale=2):
-                    check_output = gr.Markdown(label="批改结果")
-            
-            check_btn.click(
-                fn=check_answer_ui,
-                inputs=[check_question, check_answer_text, check_user_answer, check_type],
-                outputs=[check_output]
             )
         
         # ========== 句型库 ==========

@@ -66,7 +66,7 @@ EXAMPLE_GENERATION_PROMPT = """你是一个语言学习助手，根据给定的�
 2. 例句难度应与原句相当或略低（便于学习）
 3. 例句内容应实用、贴近生活
 4. 每个例句需附带中文翻译（如果是英语）或英文翻译（如果是汉语）
-5. 标注每个例句的关键结构成分
+5. 必须标注每个例句的完整句子成分（主语、谓语、宾语等），用于颜色标注
 
 返回JSON格式：
 {
@@ -75,7 +75,11 @@ EXAMPLE_GENERATION_PROMPT = """你是一个语言学习助手，根据给定的�
     {
       "sentence": "例句",
       "translation": "翻译",
-      "components": [{"role": "成分", "text": "..."}],
+      "components": [
+        {"role": "主语", "text": "具体文本"},
+        {"role": "谓语", "text": "具体文本"},
+        {"role": "宾语", "text": "具体文本"}
+      ],
       "difficulty": "beginner/intermediate/advanced",
       "context": "使用场景说明"
     }
@@ -83,30 +87,40 @@ EXAMPLE_GENERATION_PROMPT = """你是一个语言学习助手，根据给定的�
   "learning_tips": "学习建议"
 }
 
+重要：components数组必须包含完整的句子成分分析，每个成分必须有role和text字段：
+- role: 成分名称，必须是以下之一：主语、谓语、宾语、定语、状语、补语、表语
+- text: 该成分在句子中的具体文本（必须是sentence中的实际文字）
+
 生成5-8个例句，只返回JSON。"""
 
-# 练习题生成提示词
-EXERCISE_GENERATION_PROMPT = """你是一个语言教学专家，根据给定的句子结构生成练习题。
+# 练习题生成提示词 - 全部为选择题
+EXERCISE_GENERATION_PROMPT = """你是一个语言教学专家，根据给定的句子结构生成选择题练习。
 
-任务：基于提供的句子结构，设计多种类型的练习题，帮助学习者巩固掌握。
+任务：基于提供的句子结构，设计选择题练习题，帮助学习者巩固掌握。
 
-练习题类型：
-1. 填空题 - 挖空关键成分，让学习者补全
-2. 改错题 - 提供有语法错误的句子，让学习者改正
-3. 翻译题 - 提供中文/英文，让学习者翻译成目标语言
-4. 造句题 - 给定关键词或结构，让学习者造句
-5. 选择题 - 提供多个选项，选择正确的句子结构
+要求：
+1. 所有题目都是选择题形式
+2. 每题有4个选项（A、B、C、D）
+3. 只有1个正确答案
+4. 干扰项要有迷惑性但明显错误
+5. 提供详细解析说明
 
 返回JSON格式：
 {
   "structure_pattern": "句型模板",
   "exercises": [
     {
-      "type": "fill_blank|error_correction|translation|sentence_making|choice",
-      "question": "题目",
-      "hint": "提示",
-      "answer": "正确答案",
-      "explanation": "解析说明",
+      "type": "choice",
+      "question": "题目内容（如：选择正确的句子/填空题等）",
+      "options": {
+        "A": "选项A内容",
+        "B": "选项B内容", 
+        "C": "选项C内容",
+        "D": "选项D内容"
+      },
+      "answer": "正确答案字母（A/B/C/D）",
+      "answer_text": "正确答案的完整内容",
+      "explanation": "详细解析说明为什么选这个答案",
       "difficulty": "beginner/intermediate/advanced"
     }
   ],
@@ -114,7 +128,14 @@ EXERCISE_GENERATION_PROMPT = """你是一个语言教学专家，根据给定的
   "estimated_time": "预计完成时间（分钟）"
 }
 
-生成6-10道练习题，涵盖至少3种题型，只返回JSON。"""
+题目类型示例：
+1. 语法选择：选择语法正确的句子
+2. 填空选择：选择正确的词填空
+3. 翻译选择：选择正确的翻译
+4. 改错选择：选择正确的改正方式
+5. 结构选择：选择符合句型结构的句子
+
+生成6-10道选择题，只返回JSON。"""
 
 # 批改提示词
 CORRECTION_PROMPT = """你是一个严格的语言学习批改助手，对用户提交的答案进行批改和指导。
