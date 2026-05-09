@@ -6,10 +6,9 @@ AI Learning - Cloudflare Worker
 
 import json
 import re
-import sys
 
 # Cloudflare Workers 环境下从环境变量获取 API Key
-API_KEY = None  # 生产环境通过 env.API_KEY 获取
+API_KEY = None
 
 # ============ 提示词定义 ============
 
@@ -84,7 +83,6 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
     from js import XMLHttpRequest
 
     url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
     payload = json.dumps({
         "model": model,
         "messages": [
@@ -129,13 +127,10 @@ def get_common_patterns(language: str = None, level: str = None) -> list:
     return patterns
 
 
-# ============ 请求处理 ============
-
 async def analyze_sentence_handler(sentence: str, language: str, api_key: str) -> dict:
     """分析句子结构"""
     if language is None:
         language = "zh" if any('\u4e00' <= c <= '\u9fff' for c in sentence) else "en"
-
     prompt = f"语言: {language}\n句子: {sentence}"
     return await _call_bailian(prompt, STRUCTURE_ANALYSIS_PROMPT, api_key)
 
@@ -156,12 +151,26 @@ async def generate_exercises_handler(pattern: str, language: str, difficulty: st
 
 # ============ Cloudflare Worker 入口 ============
 
+def make_response(data, status=200, cors_headers=None):
+    """构造响应"""
+    if cors_headers is None:
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+    body = json.dumps(data, ensure_ascii=False)
+    return Response.new(body, {
+        "status": status,
+        "headers": {"Content-Type": "application/json", **cors_headers}
+    })
+
+
 async def on_fetch(request, env):
     """Cloudflare Worker 主入口"""
     global API_KEY
     API_KEY = env.API_KEY if hasattr(env, 'API_KEY') else None
 
-    # CORS 头
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -172,28 +181,22 @@ async def on_fetch(request, env):
     if request.method == "OPTIONS":
         return Response.new(None, {"status": 204, "headers": cors_headers})
 
-    # 解析路径和查询参数
-    url = URL.new(request.url)
-    path_parts = url.pathname.split("/")[1:]  # 去掉开头的空字符串
-
-    method = request.method
-    content_type = request.headers.get("content-type", "")
-
-    # 获取请求体
-    body = None
-    if request.method == "POST" and "application/json" in content_type:
-        try:
-            body = json.loads(await request.text())
-        except:
-            pass
-
-    # 路由处理
-    response_data = None
-    status = 200
-
     try:
+        url = URL.new(request.url)
+        path_parts = url.pathname.split("/")[1:]
+
+        method = request.method
+        content_type = request.headers.get("content-type", "")
+
+        body = None
+        if method == "POST" and "application/json" in content_type:
+            try:
+                body = json.loads(await request.text())
+            except Exception:
+                pass
+
+        # API 路由
         if len(path_parts) >= 1 and path_parts[0] == "api":
-            # API 路由
             if len(path_parts) == 2:
                 endpoint = path_parts[1]
 
@@ -201,69 +204,57 @@ async def on_fetch(request, env):
                     sentence = body.get("sentence", "") if body else ""
                     language = body.get("language") if body else None
                     if not sentence:
-                        response_data = {"error": "sentence 参数必填"}
-                        status = 400
-                    else:
-                        result = await analyze_sentence_handler(sentence, language, API_KEY)
-                        response_data = result
+                        return make_response({"error": "sentence 参数必填"}, 400, cors_headers)
+                    result = await analyze_sentence_handler(sentence, language, API_KEY)
+                    return make_response(result, 200, cors_headers)
 
                 elif endpoint == "examples" and method == "POST":
                     pattern = body.get("pattern", "") if body else ""
                     language = body.get("language", "en") if body else "en"
                     count = body.get("count", 5) if body else 5
                     if not pattern:
-                        response_data = {"error": "pattern 参数必填"}
-                        status = 400
-                    else:
-                        # 检查是否是句型 ID
-                        pattern_info = get_pattern_by_id(pattern)
-                        if pattern_info:
-                            pattern = pattern_info["pattern"]
-                            language = pattern_info["id"][:2]
-                        result = await generate_examples_handler(pattern, language, count, API_KEY)
-                        response_data = result
+                        return make_response({"error": "pattern 参数必填"}, 400, cors_headers)
+                    pattern_info = get_pattern_by_id(pattern)
+                    if pattern_info:
+                        pattern = pattern_info["pattern"]
+                        language = pattern_info["id"][:2]
+                    result = await generate_examples_handler(pattern, language, count, API_KEY)
+                    return make_response(result, 200, cors_headers)
 
                 elif endpoint == "exercises" and method == "POST":
                     pattern = body.get("pattern", "") if body else ""
                     language = body.get("language", "en") if body else "en"
                     difficulty = body.get("difficulty") if body else None
                     if not pattern:
-                        response_data = {"error": "pattern 参数必填"}
-                        status = 400
-                    else:
-                        pattern_info = get_pattern_by_id(pattern)
-                        if pattern_info:
-                            pattern = pattern_info["pattern"]
-                            language = pattern_info["id"][:2]
-                        result = await generate_exercises_handler(pattern, language, difficulty, API_KEY)
-                        response_data = result
+                        return make_response({"error": "pattern 参数必填"}, 400, cors_headers)
+                    pattern_info = get_pattern_by_id(pattern)
+                    if pattern_info:
+                        pattern = pattern_info["pattern"]
+                        language = pattern_info["id"][:2]
+                    result = await generate_exercises_handler(pattern, language, difficulty, API_KEY)
+                    return make_response(result, 200, cors_headers)
 
                 elif endpoint == "patterns" and method == "GET":
                     language = url.searchParams.get("language") if url.searchParams else None
                     level = url.searchParams.get("level") if url.searchParams else None
                     patterns = get_common_patterns(language, level)
-                    response_data = {"patterns": patterns}
+                    return make_response({"patterns": patterns}, 200, cors_headers)
 
                 else:
-                    response_data = {"error": f"未知端点: {endpoint}"}
-                    status = 404
+                    return make_response({"error": f"未知端点: {endpoint}"}, 404, cors_headers)
 
             elif len(path_parts) == 1 and path_parts[0] == "api":
-                # /api 根路径返回 API 信息
-                response_data = {
+                return make_response({
                     "name": "AI Learning API",
                     "version": "1.0.0",
                     "endpoints": ["/api/analyze", "/api/examples", "/api/exercises", "/api/patterns"]
-                }
+                }, 200, cors_headers)
 
             else:
-                response_data = {"error": "API 路由未找到"}
-                status = 404
+                return make_response({"error": "API 路由未找到"}, 404, cors_headers)
 
-        else:
-            # 静态文件 - 返回 index.html
-            response_text = """
-<!DOCTYPE html>
+        # 返回 HTML 页面
+        html_content = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -296,10 +287,6 @@ async def on_fetch(request, env):
         .pattern-item { padding: 10px; background: #f0f0f0; border-radius: 5px; font-size: 13px; }
         .pattern-item .name { font-weight: 600; color: #333; }
         .pattern-item .meta { font-size: 11px; color: #666; margin-top: 3px; }
-        .example-item { margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee; }
-        .example-item:last-child { border-bottom: none; }
-        .example-sentence { font-size: 16px; margin-bottom: 5px; }
-        .example-translation { color: #666; font-size: 14px; }
         footer { text-align: center; padding: 20px; color: #888; font-size: 12px; }
         @media (max-width: 600px) { .container { padding: 10px; } header h1 { font-size: 1.5em; } .tabs { gap: 5px; } .tab { padding: 8px 12px; font-size: 12px; } }
     </style>
@@ -382,7 +369,6 @@ async def on_fetch(request, env):
     <script>
         const API_BASE = '/api';
 
-        // Tab 切换
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -392,20 +378,16 @@ async def on_fetch(request, env):
             });
         });
 
-        // 句子分析
         async function analyzeSentence() {
             const input = document.getElementById('analyze-input');
             const btn = document.getElementById('analyze-btn');
             const result = document.getElementById('analyze-result');
-
             const sentence = input.value.trim();
             if (!sentence) { alert('请输入句子'); return; }
-
             result.style.display = 'block';
             result.className = 'result loading';
             result.textContent = '🔍 分析中...';
             btn.disabled = true;
-
             try {
                 const resp = await fetch(API_BASE + '/analyze', {
                     method: 'POST',
@@ -413,14 +395,8 @@ async def on_fetch(request, env):
                     body: JSON.stringify({sentence, language: null})
                 });
                 const data = await resp.json();
-
-                if (data.error) {
-                    result.className = 'result error';
-                    result.textContent = '❌ 错误: ' + data.error;
-                } else {
-                    result.className = 'result';
-                    result.textContent = JSON.stringify(data, null, 2);
-                }
+                result.className = 'result';
+                result.textContent = JSON.stringify(data, null, 2);
             } catch (e) {
                 result.className = 'result error';
                 result.textContent = '❌ 请求失败: ' + e.message;
@@ -429,37 +405,26 @@ async def on_fetch(request, env):
             }
         }
 
-        // 加载句型库到下拉框
         async function loadPatternOptions() {
             try {
                 const resp = await fetch(API_BASE + '/patterns');
                 const data = await resp.json();
                 const patterns = data.patterns || [];
-
-                const options = patterns.map(p =>
-                    `<option value="${p.id}">${p.id} - ${p.name}</option>`
-                ).join('');
-
+                const options = patterns.map(p => `<option value="${p.id}">${p.id} - ${p.name}</option>`).join('');
                 document.getElementById('example-pattern').innerHTML = '<option value="">-- 选择句型 --</option>' + options;
                 document.getElementById('exercise-pattern').innerHTML = '<option value="">-- 选择句型 --</option>' + options;
-            } catch (e) {
-                console.error('加载句型库失败:', e);
-            }
+            } catch (e) { console.error('加载句型库失败:', e); }
         }
 
-        // 生成例句
         async function generateExamples() {
             const pattern = document.getElementById('example-pattern').value;
             const language = document.getElementById('example-lang').value;
             const count = parseInt(document.getElementById('example-count').value);
             const result = document.getElementById('examples-result');
-
             if (!pattern) { alert('请选择句型'); return; }
-
             result.style.display = 'block';
             result.className = 'result loading';
             result.textContent = '✨ 生成中...';
-
             try {
                 const resp = await fetch(API_BASE + '/examples', {
                     method: 'POST',
@@ -475,18 +440,14 @@ async def on_fetch(request, env):
             }
         }
 
-        // 生成练习题
         async function generateExercises() {
             const pattern = document.getElementById('exercise-pattern').value;
             const language = document.getElementById('exercise-lang').value;
             const result = document.getElementById('exercises-result');
-
             if (!pattern) { alert('请选择句型'); return; }
-
             result.style.display = 'block';
             result.className = 'result loading';
             result.textContent = '🎯 生成中...';
-
             try {
                 const resp = await fetch(API_BASE + '/exercises', {
                     method: 'POST',
@@ -502,56 +463,36 @@ async def on_fetch(request, env):
             }
         }
 
-        // 句型库
         async function loadPatterns() {
             const language = document.getElementById('pattern-lang').value;
             const result = document.getElementById('patterns-result');
-
             result.innerHTML = '<div class="loading">📚 加载中...</div>';
-
             try {
                 const url = API_BASE + '/patterns' + (language ? '?language=' + language : '');
                 const resp = await fetch(url);
                 const data = await resp.json();
                 const patterns = data.patterns || [];
-
-                result.innerHTML = patterns.map(p => \`
+                result.innerHTML = patterns.map(p => `
                     <div class="pattern-item">
-                        <div class="name">\${p.id} - \${p.name}</div>
-                        <div class="meta">\${p.level} · \${p.pattern}</div>
-                        <div class="meta">例句: \${p.example}</div>
+                        <div class="name">${p.id} - ${p.name}</div>
+                        <div class="meta">${p.level} · ${p.pattern}</div>
+                        <div class="meta">例句: ${p.example}</div>
                     </div>
-                \`).join('');
+                `).join('');
             } catch (e) {
                 result.innerHTML = '<div class="result error">❌ 加载失败: ' + e.message + '</div>';
             }
         }
 
-        // 初始化
         loadPatternOptions();
     </script>
 </body>
 </html>"""
-            return Response.new(response_text, {
-                "status": 200,
-                "headers": {
-                    "Content-Type": "text/html; charset=utf-8",
-                    **cors_headers
-                }
-            })
 
-    # 返回 JSON 响应
-    if response_data:
-        response_text = json.dumps(response_data, ensure_ascii=False)
-        return Response.new(response_text, {
-            "status": status,
-            "headers": {
-                "Content-Type": "application/json",
-                **cors_headers
-            }
+        return Response.new(html_content, {
+            "status": 200,
+            "headers": {"Content-Type": "text/html; charset=utf-8", **cors_headers}
         })
 
-    return Response.new(json.dumps({"error": "未找到资源"}), {
-        "status": 404,
-        "headers": {"Content-Type": "application/json", **cors_headers}
-    })
+    except Exception as e:
+        return make_response({"error": str(e)}, 500, cors_headers)
