@@ -82,13 +82,68 @@ vercel
 
 ---
 
+## 第四步：部署到 Cloudflare Workers（连接 GitHub）
+
+代码已托管 GitHub，可直接连接实现**推送代码 → 自动部署**。
+
+### 4.1 创建 Cloudflare Workers 项目
+1. 访问 https://dash.cloudflare.com
+2. 点击 **Workers & Pages** → **Create an application**
+3. 选择 **Deploy from GitHub**
+4. 授权 GitHub 访问，选择 `xiao-woo/ai-learning` 仓库
+
+### 4.2 配置构建和入口
+在创建页面设置：
+- **Production branch**: `main`
+- **Build command**: （留空，Worker Python 无需构建）
+- **Build output directory**: （留空）
+- **Entry point**: `src/worker.py`
+
+### 4.3 配置环境变量
+进入项目 → **Settings** → **Variables and Secrets** → **Add variable**：
+- **Variable name**: `API_KEY`
+- **Value**: `sk-9e6be88fab044f719313ce6bba59b759`
+
+### 4.4 部署
+点击 **Save and Deploy**。以后每次推送到 `main` 分支，Cloudflare 会自动重新部署。
+
+### 4.5 获取访问地址
+部署完成后返回 `.workers.dev` 域名，例如：
+`https://ai-learning.xiao-woo.workers.dev`
+
+### 本地开发
+```bash
+# 克隆仓库后，本地预览
+wrangler dev
+
+# 本地 API 服务器（与 Worker 接口兼容）
+python -m uvicorn src.api:app --reload --port 8787
+```
+
+### Cloudflare 架构
+```
+src/
+  worker.py       # Cloudflare Worker 入口（Python），内嵌 HTML 前端
+  api.py          # 本地 FastAPI 开发服务器
+wrangler.toml     # Cloudflare 配置
+public/          # 静态资源（备用）
+```
+
+### 注意事项
+- Worker 有 10ms CPU 时间限制，复杂 AI 分析可能超时
+- 百炼 API Key 必须通过 Dashboard 环境变量配置，不要硬编码
+- 免费版 Workers 每日 100,000 请求限额
+
+---
+
 ## 快速对比
 
-| 平台 | 免费额度 | 特点 |
+| 平台 | 免费额度 | 触发方式 |
 |------|---------|------|
-| **Railway** | $5/月 | 简单易用，自动检测 |
-| **Vercel** | 100GB/月 | 速度快，需CLI部署 |
-| **Render** | 750小时/月 | 功能全，有休眠 |
+| **Cloudflare Workers** | 100k 请求/天 | GitHub push → 自动部署 |
+| **Railway** | $5/月 | GitHub push → 自动部署 |
+| **Vercel** | 100GB/月 | GitHub push → 自动部署 |
+| **Render** | 750小时/月 | GitHub push → 自动部署 |
 
 ---
 
@@ -101,7 +156,7 @@ A: 检查日志，确保环境变量 `DASHSCOPE_API_KEY` 已添加
 A: Vercel 主要面向前端/Serverless，后端持续运行项目建议用 Railway
 
 ### Q: 如何更新代码？
-A: 更新本地代码 → GitHub Desktop → Push → Railway 会自动重新部署
+A: 代码推送到 GitHub 后，所有连接的平台（Cloudflare/Railway/Vercel/Render）都会自动重新部署。
 
 ---
 
@@ -109,6 +164,9 @@ A: 更新本地代码 → GitHub Desktop → Push → Railway 会自动重新部
 
 | 文件 | 说明 |
 |------|------|
+| `src/worker.py` | Cloudflare Workers 入口 |
+| `src/api.py` | 本地 FastAPI 开发服务器 |
+| `wrangler.toml` | Cloudflare 配置 |
 | `app.py` | Railway/Render 入口 |
 | `web.py` | Gradio Web 主程序 |
 | `learning_engine.py` | AI 学习引擎 |
