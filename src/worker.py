@@ -329,6 +329,24 @@ async def on_fetch(request, env):
         .option-check { margin-left: auto; }
         .exercise-explanation { font-size: 13px; color: #666; padding: 8px 12px; background: #f5f5ff; border-radius: 5px; margin-bottom: 6px; }
         .exercise-answer { font-size: 13px; color: #2e7d32; }
+        /* 句子着色标注 */
+        .hl-sentence { font-size: 16px; font-weight: 600; color: #333; line-height: 2; padding: 8px 0; }
+        .hl-comp { border-radius: 4px; padding: 2px 5px; cursor: help; border-bottom: 2px solid transparent; position: relative; }
+        .hl-comp:hover::after { content: attr(data-role); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #333; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; pointer-events: none; z-index: 10; }
+        .hl-subject { background: #e3f2fd; color: #1565c0; border-bottom-color: #1565c0; }      /* 主语 - 蓝 */
+        .hl-predicate { background: #e8f5e9; color: #2e7d32; border-bottom-color: #2e7d32; }    /* 谓语 - 绿 */
+        .hl-predicative { background: #e8f5e9; color: #2e7d32; border-bottom-color: #2e7d32; }  /* 表语 - 绿 */
+        .hl-object { background: #fff3e0; color: #e65100; border-bottom-color: #e65100; }       /* 宾语 - 橙 */
+        .hl-attributive { background: #f3e5f5; color: #6a1b9a; border-bottom-color: #6a1b9a; }  /* 定语 - 紫 */
+        .hl-adverbial { background: #e0f2f1; color: #00695c; border-bottom-color: #00695c; }    /* 状语 - 青 */
+        .hl-complement { background: #fce4ec; color: #c62828; border-bottom-color: #c62828; }   /* 补语 - 红 */
+        .hl-verb { background: #e8f5e9; color: #1b5e20; border-bottom-color: #1b5e20; }         /* 动词 - 深绿 */
+        .hl-noun { background: #e3f2fd; color: #0d47a1; border-bottom-color: #0d47a1; }         /* 名词 - 深蓝 */
+        .hl-default { background: #f5f5f5; color: #666; border-bottom-color: #999; }            /* 其他 - 灰 */
+        /* 着色例句中保留角色标签行 */
+        .role-label-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .role-dot { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+
         .pattern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 15px; }
         .pattern-item { padding: 10px; background: #f0f0f0; border-radius: 5px; font-size: 13px; }
         .pattern-item .name { font-weight: 600; color: #333; }
@@ -415,6 +433,44 @@ async def on_fetch(request, env):
     <script>
         const API_BASE = '/api';
 
+        const ROLE_COLORS = {
+            '主语':'subject','Subject':'subject','S':'subject',
+            '谓语':'predicate','Predicate':'predicate','谓语动词':'predicate','V':'predicate',
+            '表语':'predicative','Predicative':'predicative',
+            '宾语':'object','Object':'object','O':'object',
+            '定语':'attributive','Attributive':'attributive',
+            '状语':'adverbial','Adverbial':'adverbial','Adv':'adverbial',
+            '补语':'complement','Complement':'complement',
+            '动词':'verb','Verb':'verb',
+            '名词':'noun','Noun':'noun',
+            情态动词:'verb','情态':'verb',
+        };
+
+        function esc(str) {
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        function highlightSentence(sentence, components) {
+            if (!components || !components.length) return esc(sentence);
+            const sorted = components.map(c => ({
+                role: c.role || '',
+                text: c.text || '',
+                idx: sentence.indexOf(c.text || '')
+            })).filter(c => c.idx !== -1 && c.text.length > 0)
+              .sort((a, b) => a.idx - b.idx || b.text.length - a.text.length);
+            if (!sorted.length) return esc(sentence);
+            let result = '', pos = 0;
+            for (const comp of sorted) {
+                if (comp.idx < pos) continue;
+                if (comp.idx > pos) result += esc(sentence.substring(pos, comp.idx));
+                const cls = ROLE_COLORS[comp.role] || 'default';
+                result += '<span class="hl-comp hl-' + cls + '" data-role="' + esc(comp.role) + '">' + esc(comp.text) + '</span>';
+                pos = comp.idx + comp.text.length;
+            }
+            if (pos < sentence.length) result += esc(sentence.substring(pos));
+            return result;
+        }
+
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -448,7 +504,8 @@ async def on_fetch(request, env):
                 }
                 const langLabel = data.language === 'en' ? '英语' : data.language === 'zh' ? '汉语' : data.language;
                 let html = '';
-                html += '<div class="analysis-header"><strong>📝 原句:</strong> ' + data.original + '</div>';
+                html += '<div class="analysis-header"><strong>📝 原句:</strong></div>';
+                html += '<div class="hl-sentence">' + highlightSentence(data.original, data.components) + '</div>';
                 if (data.translation) html += '<div class="analysis-row"><strong>🌐 翻译:</strong> ' + data.translation + '</div>';
                 html += '<div class="analysis-row"><strong>🗂️ 类型:</strong> ' + (data.sentence_type || 'N/A') + ' · <strong>🔤 语言:</strong> ' + langLabel + '</div>';
                 if (data.structure_type) html += '<div class="analysis-row"><strong>🏗️ 结构:</strong> ' + data.structure_type + '</div>';
@@ -523,7 +580,7 @@ async def on_fetch(request, env):
                     data.examples.forEach((ex, i) => {
                         html += '<div class="example-card">';
                         html += '<div class="example-num">#' + (i+1) + '</div>';
-                        html += '<div class="example-sentence">' + ex.sentence + '</div>';
+                        html += '<div class="example-sentence">' + highlightSentence(ex.sentence, ex.components) + '</div>';
                         html += '<div class="example-translation">' + ex.translation + '</div>';
                         if (ex.components && ex.components.length) {
                             html += '<div class="example-components">';
