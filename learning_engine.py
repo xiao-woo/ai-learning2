@@ -8,12 +8,12 @@ import json
 import re
 import sys
 import os
+import urllib.request
+import urllib.error
+import ssl
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import API_KEY, auto_detect_task_type, select_model, TokenManager, TOKENS
-import dashscope
-from dashscope import Generation
-dashscope.api_key = API_KEY
+from config import API_KEY, BASE_URL, auto_detect_task_type, select_model, TokenManager, TOKENS
 
 # ============ 系统提示词 ============
 
@@ -318,22 +318,40 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"无法从回复中提取JSON: {text[:200]}")
 
 
-def _call_api(prompt: str, system_prompt: str, model_id: str = "qwen-plus-latest") -> dict:
-    """调用百炼 API"""
-    resp = Generation.call(
-        model=model_id,
-        messages=[
+def _call_api(prompt: str, system_prompt: str, model_id: str = "MiniMax-M2.7-highspeed") -> dict:
+    """调用 moreai.cloud API（OpenAI 兼容格式）"""
+    url = f"{BASE_URL}/chat/completions"
+    payload = json.dumps({
+        "model": model_id,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
-        result_format="message",
-        stream=False,
-    )
+        "stream": False,
+    }).encode()
 
-    if resp.status_code != 200:
-        raise Exception(f"API错误: {resp.message}")
+    req = urllib.request.Request(url, data=payload, headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }, method="POST")
 
-    return _extract_json(resp.output.choices[0].message.content)
+    try:
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        raise Exception(f"API错误 (HTTP {e.code}): {body}")
+    except urllib.error.URLError as e:
+        raise Exception(f"API连接失败: {e.reason}")
+
+    choices = result.get("choices", [])
+    if not choices:
+        raise Exception(f"API返回异常: {result}")
+
+    content = choices[0].get("message", {}).get("content", "")
+    return _extract_json(content)
 
 
 def analyze_sentence(sentence: str, language: str = None) -> dict:
