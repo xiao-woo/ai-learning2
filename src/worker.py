@@ -106,7 +106,7 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
     )
 
     if resp.status == 200:
-        data = await resp.json()
+        data = (await resp.json()).to_py()
         content = data["choices"][0]["message"]["content"]
         return _extract_json(content)
     else:
