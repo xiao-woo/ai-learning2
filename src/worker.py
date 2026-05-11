@@ -95,13 +95,13 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
         "temperature": 0.7
     })
 
+    request_headers = Headers.new()
+    request_headers.set("Authorization", f"Bearer {api_key}")
+    request_headers.set("Content-Type", "application/json")
     resp = await fetch(
         url,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        },
+        headers=request_headers,
         body=payload
     )
 
