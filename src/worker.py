@@ -292,9 +292,43 @@ async def on_fetch(request, env):
         .btn-primary { background: #667eea; color: white; }
         .btn-primary:hover { background: #5568d3; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #667eea; white-space: pre-wrap; font-family: monospace; line-height: 1.6; max-height: 400px; overflow-y: auto; }
+        .result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #667eea; line-height: 1.6; max-height: 500px; overflow-y: auto; }
         .result.error { border-left-color: #dc3545; background: #fff5f5; }
+        .result.raw-json { white-space: pre-wrap; font-family: monospace; }
         .loading { text-align: center; padding: 20px; color: #666; }
+        .error-line { color: #dc3545; padding: 10px; }
+        .pattern-header { background: linear-gradient(135deg, #667eea15, #764ba215); padding: 12px 15px; border-radius: 8px; margin-bottom: 15px; font-size: 15px; color: #555; }
+        .pattern-header code { background: #667eea20; padding: 3px 8px; border-radius: 4px; color: #667eea; font-weight: 600; }
+        .examples-list { display: flex; flex-direction: column; gap: 12px; }
+        .example-card { background: white; border: 1px solid #e8e8e8; border-radius: 8px; padding: 15px; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+        .example-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .example-num { position: absolute; top: -8px; left: -8px; background: #667eea; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+        .example-sentence { font-size: 16px; font-weight: 600; color: #333; margin-bottom: 4px; }
+        .example-translation { font-size: 14px; color: #888; margin-bottom: 8px; }
+        .example-components { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+        .component-tag { display: inline-block; background: #f0f4ff; border: 1px solid #d6e4ff; border-radius: 4px; padding: 3px 8px; font-size: 12px; color: #555; }
+        .comp-role { color: #667eea; font-weight: 600; }
+        .difficulty-badge { display: inline-block; margin-top: 8px; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+        .difficulty-badge.beginner { background: #e8f5e9; color: #2e7d32; }
+        .difficulty-badge.intermediate { background: #fff3e0; color: #e65100; }
+        .difficulty-badge.advanced { background: #fce4ec; color: #c62828; }
+        .learning-tips { margin-top: 15px; padding: 12px 15px; background: #fff8e1; border-radius: 8px; font-size: 13px; color: #795548; border-left: 3px solid #ffc107; }
+        .analysis-header { font-size: 16px; font-weight: 600; color: #333; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e8e8e8; }
+        .analysis-row { font-size: 14px; color: #555; margin-bottom: 5px; }
+        .analysis-section { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 5px; }
+        .exercises-list { display: flex; flex-direction: column; gap: 15px; }
+        .exercise-card { background: white; border: 1px solid #e8e8e8; border-radius: 8px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+        .exercise-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .exercise-num { font-size: 13px; color: #667eea; font-weight: 600; margin-bottom: 8px; }
+        .exercise-question { font-size: 15px; font-weight: 500; color: #333; margin-bottom: 10px; padding: 10px; background: #f8f9ff; border-radius: 5px; }
+        .exercise-options { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+        .option-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #e8e8e8; border-radius: 5px; font-size: 14px; }
+        .option-row.option-correct { background: #e8f5e9; border-color: #a5d6a7; }
+        .option-letter { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; background: #667eea; color: white; border-radius: 50%; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+        .option-text { flex: 1; color: #444; }
+        .option-check { margin-left: auto; }
+        .exercise-explanation { font-size: 13px; color: #666; padding: 8px 12px; background: #f5f5ff; border-radius: 5px; margin-bottom: 6px; }
+        .exercise-answer { font-size: 13px; color: #2e7d32; }
         .pattern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 15px; }
         .pattern-item { padding: 10px; background: #f0f0f0; border-radius: 5px; font-size: 13px; }
         .pattern-item .name { font-weight: 600; color: #333; }
@@ -408,10 +442,44 @@ async def on_fetch(request, env):
                 });
                 const data = await resp.json();
                 result.className = 'result';
-                result.textContent = JSON.stringify(data, null, 2);
+                if (data.error) {
+                    result.innerHTML = '<div class="error-line">❌ ' + data.error + '</div>';
+                    return;
+                }
+                const langLabel = data.language === 'en' ? '英语' : data.language === 'zh' ? '汉语' : data.language;
+                let html = '';
+                html += '<div class="analysis-header"><strong>📝 原句:</strong> ' + data.original + '</div>';
+                if (data.translation) html += '<div class="analysis-row"><strong>🌐 翻译:</strong> ' + data.translation + '</div>';
+                html += '<div class="analysis-row"><strong>🗂️ 类型:</strong> ' + (data.sentence_type || 'N/A') + ' · <strong>🔤 语言:</strong> ' + langLabel + '</div>';
+                if (data.structure_type) html += '<div class="analysis-row"><strong>🏗️ 结构:</strong> ' + data.structure_type + '</div>';
+                if (data.structure_pattern) html += '<div class="analysis-row"><strong>📐 模式:</strong> <code>' + data.structure_pattern + '</code></div>';
+                if (data.tense_aspect) html += '<div class="analysis-row"><strong>⏰ 时态:</strong> ' + data.tense_aspect + '</div>';
+                if (data.components && data.components.length) {
+                    html += '<div class="analysis-section"><strong>🧩 成分分析:</strong></div>';
+                    html += '<div class="example-components">';
+                    data.components.forEach(c => {
+                        const role = typeof c === 'object' ? (c.role || '') : '';
+                        const text = typeof c === 'object' ? (c.text || c) : c;
+                        html += '<span class="component-tag"><span class="comp-role">' + role + '</span> ' + text + '</span>';
+                    });
+                    html += '</div>';
+                }
+                if (data.key_phrases && data.key_phrases.length) {
+                    html += '<div class="analysis-section" style="margin-top:10px"><strong>🔑 关键词组:</strong></div>';
+                    html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">';
+                    data.key_phrases.forEach(kp => {
+                        html += '<span class="component-tag">' + kp + '</span>';
+                    });
+                    html += '</div>';
+                }
+                if (data.difficulty) {
+                    const badges = {'beginner': '初级', 'intermediate': '中级', 'advanced': '高级'};
+                    html += '<div class="analysis-row" style="margin-top:10px"><strong>📊 难度:</strong> <span class="difficulty-badge ' + data.difficulty + '">' + (badges[data.difficulty] || data.difficulty) + '</span></div>';
+                }
+                result.innerHTML = html;
             } catch (e) {
                 result.className = 'result error';
-                result.textContent = '❌ 请求失败: ' + e.message;
+                result.innerHTML = '❌ 请求失败: ' + e.message;
             } finally {
                 btn.disabled = false;
             }
@@ -445,10 +513,40 @@ async def on_fetch(request, env):
                 });
                 const data = await resp.json();
                 result.className = 'result';
-                result.textContent = JSON.stringify(data, null, 2);
+                if (data.error) {
+                    result.innerHTML = '<div class="error-line">❌ ' + data.error + '</div>';
+                    return;
+                }
+                let html = '<div class="pattern-header">📐 结构模式: <code>' + (data.structure_pattern || '') + '</code></div>';
+                if (data.examples && data.examples.length) {
+                    html += '<div class="examples-list">';
+                    data.examples.forEach((ex, i) => {
+                        html += '<div class="example-card">';
+                        html += '<div class="example-num">#' + (i+1) + '</div>';
+                        html += '<div class="example-sentence">' + ex.sentence + '</div>';
+                        html += '<div class="example-translation">' + ex.translation + '</div>';
+                        if (ex.components && ex.components.length) {
+                            html += '<div class="example-components">';
+                            ex.components.forEach(c => {
+                                html += '<span class="component-tag"><span class="comp-role">' + c.role + '</span> ' + c.text + '</span>';
+                            });
+                            html += '</div>';
+                        }
+                        if (ex.difficulty) {
+                            const badges = {'beginner': '初级', 'intermediate': '中级', 'advanced': '高级'};
+                            html += '<span class="difficulty-badge ' + ex.difficulty + '">' + (badges[ex.difficulty] || ex.difficulty) + '</span>';
+                        }
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                if (data.learning_tips) {
+                    html += '<div class="learning-tips">💡 学习提示: ' + data.learning_tips + '</div>';
+                }
+                result.innerHTML = html;
             } catch (e) {
                 result.className = 'result error';
-                result.textContent = '❌ 错误: ' + e.message;
+                result.innerHTML = '❌ 错误: ' + e.message;
             }
         }
 
@@ -468,10 +566,45 @@ async def on_fetch(request, env):
                 });
                 const data = await resp.json();
                 result.className = 'result';
-                result.textContent = JSON.stringify(data, null, 2);
+                if (data.error) {
+                    result.innerHTML = '<div class="error-line">❌ ' + data.error + '</div>';
+                    return;
+                }
+                if (!data.exercises || !data.exercises.length) {
+                    result.innerHTML = '<div class="error-line">⚠️ 未生成练习题</div>';
+                    return;
+                }
+                let html = '<div class="exercises-list">';
+                data.exercises.forEach((ex, i) => {
+                    html += '<div class="exercise-card">';
+                    html += '<div class="exercise-num">第 ' + (i+1) + ' 题</div>';
+                    html += '<div class="exercise-question">' + ex.question + '</div>';
+                    if (ex.options) {
+                        html += '<div class="exercise-options">';
+                        const letters = ['A', 'B', 'C', 'D'];
+                        letters.forEach(letter => {
+                            if (ex.options[letter]) {
+                                const isCorrect = ex.answer === letter;
+                                html += '<div class="option-row' + (isCorrect ? ' option-correct' : '') + '">';
+                                html += '<span class="option-letter">' + letter + '</span>';
+                                html += '<span class="option-text">' + ex.options[letter] + '</span>';
+                                if (isCorrect) html += '<span class="option-check">✅</span>';
+                                html += '</div>';
+                            }
+                        });
+                        html += '</div>';
+                    }
+                    html += '<div class="exercise-explanation">💡 ' + ex.explanation + '</div>';
+                    if (ex.answer) {
+                        html += '<div class="exercise-answer">✅ 正确答案: <strong>' + ex.answer + '</strong></div>';
+                    }
+                    html += '</div>';
+                });
+                html += '</div>';
+                result.innerHTML = html;
             } catch (e) {
                 result.className = 'result error';
-                result.textContent = '❌ 错误: ' + e.message;
+                result.innerHTML = '❌ 错误: ' + e.message;
             }
         }
 
