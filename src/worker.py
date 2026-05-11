@@ -6,6 +6,7 @@ AI Learning - Cloudflare Worker
 
 import json
 import re
+from js import URL, Response, fetch
 
 # Cloudflare Workers 环境下从环境变量获取 API Key
 API_KEY = None
@@ -79,10 +80,12 @@ def _extract_json(text: str) -> dict:
 
 
 async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: str = "qwen-plus-latest") -> dict:
-    """调用百炼 API"""
-    from js import XMLHttpRequest
+    """调用百炼 API（使用 Cloudflare Workers fetch API）"""
+    # 检查 API Key
+    if not api_key:
+        return {"error": "API_KEY 未配置，请在 Cloudflare Workers Dashboard 中设置环境变量 API_KEY"}
 
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     payload = json.dumps({
         "model": model,
         "messages": [
@@ -92,18 +95,22 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
         "temperature": 0.7
     })
 
-    xhr = XMLHttpRequest.new()
-    xhr.open("POST", f"{url}/chat/completions", False)
-    xhr.setRequestHeader("Authorization", f"Bearer {api_key}")
-    xhr.setRequestHeader("Content-Type", "application/json")
-    xhr.send(payload)
+    resp = await fetch(url, {
+        "method": "POST",
+        "headers": {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        "body": payload
+    })
 
-    if xhr.status == 200:
-        response = json.loads(xhr.responseText)
-        content = response["choices"][0]["message"]["content"]
+    if resp.status == 200:
+        data = await resp.json()
+        content = data["choices"][0]["message"]["content"]
         return _extract_json(content)
     else:
-        return {"error": f"API错误: {xhr.status} - {xhr.responseText}"}
+        error_text = await resp.text()
+        return {"error": f"API错误: {resp.status} - {error_text}"}
 
 
 def get_pattern_by_id(pattern_id: str) -> dict:
