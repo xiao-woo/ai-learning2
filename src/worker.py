@@ -6,7 +6,7 @@ AI Learning - Cloudflare Worker
 
 import json
 import re
-from js import URL, Response, fetch
+from js import URL, Response, fetch, Headers
 
 # Cloudflare Workers 环境下从环境变量获取 API Key
 API_KEY = None
@@ -79,13 +79,13 @@ def _extract_json(text: str) -> dict:
     return {"error": f"无法解析响应: {text[:200]}"}
 
 
-async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: str = "qwen-plus-latest") -> dict:
-    """调用百炼 API（使用 Cloudflare Workers fetch API）"""
+async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: str = "MiniMax-M2.7-highspeed") -> dict:
+    """调用 AI API（使用 Cloudflare Workers fetch API）"""
     # 检查 API Key
     if not api_key:
         return {"error": "API_KEY 未配置，请在 Cloudflare Workers Dashboard 中设置环境变量 API_KEY"}
 
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    url = "https://api.moreai.cloud/v1/chat/completions"
     payload = json.dumps({
         "model": model,
         "messages": [
@@ -95,14 +95,15 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
         "temperature": 0.7
     })
 
-    resp = await fetch(url, {
-        "method": "POST",
-        "headers": {
+    resp = await fetch(
+        url,
+        method="POST",
+        headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         },
-        "body": payload
-    })
+        body=payload
+    )
 
     if resp.status == 200:
         data = await resp.json()
@@ -167,10 +168,11 @@ def make_response(data, status=200, cors_headers=None):
             "Access-Control-Allow-Headers": "Content-Type",
         }
     body = json.dumps(data, ensure_ascii=False)
-    return Response.new(body, {
-        "status": status,
-        "headers": {"Content-Type": "application/json", **cors_headers}
-    })
+    response_headers = Headers.new()
+    response_headers.set("Content-Type", "application/json")
+    for key, value in cors_headers.items():
+        response_headers.set(key, value)
+    return Response.new(body, status=status, headers=response_headers)
 
 
 async def on_fetch(request, env):
@@ -186,7 +188,10 @@ async def on_fetch(request, env):
 
     # 处理 CORS preflight
     if request.method == "OPTIONS":
-        return Response.new(None, {"status": 204, "headers": cors_headers})
+        options_headers = Headers.new()
+        for key, value in cors_headers.items():
+            options_headers.set(key, value)
+        return Response.new(None, status=204, headers=options_headers)
 
     try:
         url = URL.new(request.url)
@@ -496,10 +501,11 @@ async def on_fetch(request, env):
 </body>
 </html>"""
 
-        return Response.new(html_content, {
-            "status": 200,
-            "headers": {"Content-Type": "text/html; charset=utf-8", **cors_headers}
-        })
+        html_headers = Headers.new()
+        html_headers.set("Content-Type", "text/html; charset=utf-8")
+        for key, value in cors_headers.items():
+            html_headers.set(key, value)
+        return Response.new(html_content, status=200, headers=html_headers)
 
     except Exception as e:
         return make_response({"error": str(e)}, 500, cors_headers)
