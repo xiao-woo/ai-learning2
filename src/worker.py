@@ -1859,6 +1859,7 @@ async def on_fetch(request, env):
                 // 按保存时间倒序
                 entries.reverse();
                 entries.forEach(e => {
+                    if (!e.id) return; // 跳过没有 id 的旧数据
                     const typeLabel = e.type === 'examples' ? '✨ 例句' : '🎯 练习题';
                     const time = new Date(e.saved_at).toLocaleString('zh-CN');
                     html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 15px;background:#f8f9fa;border-radius:8px;border-left:4px solid #667eea;">';
