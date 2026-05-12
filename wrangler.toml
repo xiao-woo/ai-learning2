@@ -4,9 +4,9 @@ main = "src/worker.py"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["python_workers"]
 
-# 环境变量（在 Cloudflare Dashboard 设置）
+# 环境变量
 [vars]
-# API key 通过 Dashboard 配置
+API_KEY = "sk-9e6be88fab044f719313ce6bba59b759"
 
 # 开发环境
 [dev]

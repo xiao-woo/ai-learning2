@@ -11,23 +11,37 @@ from js import URL, Response, fetch, Headers
 # Cloudflare Workers 环境下从环境变量获取 API Key
 API_KEY = None
 
+# ============ DashScope 配置 ============
+DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DASHSCOPE_API_KEY = "sk-9e6be88fab044f719313ce6bba59b759"
+# 多模型互备列表（按优先级排序，依次尝试）
+DASHSCOPE_MODELS = [
+    "qwen3-next-80b-a3b-instruct",
+    "deepseek-r1-0528",
+]
+
 # ============ 提示词定义 ============
 
 STRUCTURE_ANALYSIS_PROMPT = """你是一个专业的语言学分析助手，精通英语和汉语的句子结构分析。
 任务：分析用户输入的句子，提取其语法结构，并以JSON格式返回。
 支持语言：英语 (en) 和 汉语 (zh)
 分析维度：句子类型、句子成分、语法结构、时态/语态、关键词汇、结构模式、翻译
-返回JSON格式必须包含：language, original, translation, sentence_type, structure_type, components, tense_aspect, key_phrases, structure_pattern, difficulty"""
+返回JSON格式必须包含：language, original, translation, sentence_type, structure_type, components, tense_aspect, key_phrases, structure_pattern, difficulty
+其中 components 是数组，每项包含 role（成分角色名称）和 text（对应原文文本片段），例如：
+[{"role": "主语", "text": "I"}, {"role": "谓语", "text": "love"}, {"role": "宾语", "text": "learning new languages"}]
+重要：只返回JSON，不要包含任何思考过程、分析说明或Markdown标记。不要使用代码块包裹，直接输出纯JSON。"""
 
 EXAMPLE_GENERATION_PROMPT = """你是一个语言学习助手，根据给定的句子结构生成同类例句。
 任务：基于提供的句子结构，生成多个同类结构的例句。
 要求：例句难度应与原句相当，内容实用、贴近生活
-返回JSON格式：{"structure_pattern": "...", "examples": [{"sentence": "...", "translation": "...", "components": [{"role": "主语", "text": "..."}], "difficulty": "beginner"}], "learning_tips": "..."}"""
+返回JSON格式：{"structure_pattern": "...", "examples": [{"sentence": "...", "translation": "...", "components": [{"role": "主语", "text": "..."}], "difficulty": "beginner"}], "learning_tips": "..."}
+重要：只返回JSON，不要包含任何思考过程、分析说明或Markdown标记。不要使用代码块包裹，直接输出纯JSON。"""
 
 EXERCISE_GENERATION_PROMPT = """你是一个语言教学专家，根据给定的句子结构生成选择题练习。
 任务：设计选择题练习题，帮助学习者巩固掌握。
 要求：所有题目都是选择题，每题4个选项，只有1个正确答案
-返回JSON格式：{"exercises": [{"type": "choice", "question": "...", "options": {"A": "...", "B": "...", "C": "...", "D": "..."}, "answer": "A", "explanation": "..."}]}"""
+返回JSON格式：{"exercises": [{"type": "choice", "question": "...", "options": {"A": "...", "B": "...", "C": "...", "D": "..."}, "answer": "A", "explanation": "..."}]}
+重要：只返回JSON，不要包含任何思考过程、分析说明或Markdown标记。不要使用代码块包裹，直接输出纯JSON。"""
 
 # ============ 句型库 ============
 
@@ -59,7 +73,12 @@ COMMON_PATTERNS = {
 # ============ 核心函数 ============
 
 def _extract_json(text: str) -> dict:
-    """从 AI 回复中提取 JSON"""
+    """从 AI 回复中提取 JSON（支持预处理去除 <think> 块等）"""
+    # 预处理：剥离 <think> 思考块
+    cleaned = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+    if cleaned:
+        text = cleaned
+
     try:
         return json.loads(text.strip())
     except Exception:
@@ -79,39 +98,52 @@ def _extract_json(text: str) -> dict:
     return {"error": f"无法解析响应: {text[:200]}"}
 
 
-async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: str = "MiniMax-M2.7-highspeed") -> dict:
-    """调用 AI API（使用 Cloudflare Workers fetch API）"""
-    # 检查 API Key
-    if not api_key:
+async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: str = None) -> dict:
+    """调用 AI API，支持多模型互备切换（依次尝试，失败自动切换到下一个）"""
+    models = [model] if model else DASHSCOPE_MODELS
+    key = api_key or DASHSCOPE_API_KEY
+
+    if not key:
         return {"error": "API_KEY 未配置，请在 Cloudflare Workers Dashboard 中设置环境变量 API_KEY"}
 
-    url = "https://api.moreai.cloud/v1/chat/completions"
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    })
+    errors = []
+    for i, m in enumerate(models):
+        url = f"{DASHSCOPE_BASE_URL}/chat/completions"
+        payload = json.dumps({
+            "model": m,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7
+        })
 
-    request_headers = Headers.new()
-    request_headers.set("Authorization", f"Bearer {api_key}")
-    request_headers.set("Content-Type", "application/json")
-    resp = await fetch(
-        url,
-        method="POST",
-        headers=request_headers,
-        body=payload
-    )
+        try:
+            # Pyodide JS bridge: list of pairs → JS Array<[string, string]> → fetch accepts it
+            resp = await fetch(
+                url,
+                method="POST",
+                headers=[["Authorization", "Bearer " + key], ["Content-Type", "application/json"]],
+                body=payload
+            )
 
-    if resp.status == 200:
-        data = (await resp.json()).to_py()
-        content = data["choices"][0]["message"]["content"]
-        return _extract_json(content)
-    else:
-        error_text = await resp.text()
-        return {"error": f"API错误: {resp.status} - {error_text}"}
+            if resp.status == 200:
+                data = (await resp.json()).to_py()
+                content = data["choices"][0]["message"]["content"]
+                return _extract_json(content)
+            else:
+                error_text = await resp.text()
+                err_msg = f"[{m}] HTTP {resp.status}: {error_text[:200]}"
+                errors.append(err_msg)
+        except Exception as e:
+            err_msg = f"[{m}] 请求异常: {str(e)[:200]}"
+            errors.append(err_msg)
+
+        if i < len(models) - 1:
+            # 尝试下一个模型
+            continue
+
+    return {"error": f"所有模型均失败 ({len(models)}个尝试): {' | '.join(errors)}"}
 
 
 def get_pattern_by_id(pattern_id: str) -> dict:
@@ -178,7 +210,7 @@ def make_response(data, status=200, cors_headers=None):
 async def on_fetch(request, env):
     """Cloudflare Worker 主入口"""
     global API_KEY
-    API_KEY = env.API_KEY if hasattr(env, 'API_KEY') else None
+    API_KEY = env.API_KEY if hasattr(env, 'API_KEY') else DASHSCOPE_API_KEY
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
@@ -306,8 +338,20 @@ async def on_fetch(request, env):
         .example-sentence { font-size: 16px; font-weight: 600; color: #333; margin-bottom: 4px; }
         .example-translation { font-size: 14px; color: #888; margin-bottom: 8px; }
         .example-components { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-        .component-tag { display: inline-block; background: #f0f4ff; border: 1px solid #d6e4ff; border-radius: 4px; padding: 3px 8px; font-size: 12px; color: #555; }
+        .component-tag { display: inline-block; background: #f0f4ff; border: 1px solid #d6e4ff; border-radius: 4px; padding: 3px 8px; font-size: 12px; color: #555; transition: all 0.15s ease; }
+        .component-tag:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
         .comp-role { color: #667eea; font-weight: 600; }
+        /* 成分标签按角色着色（与句子着色色系一致） */
+        .comp-tag-subject { background: #e3f2fd; border-color: #90caf9; } .comp-tag-subject .comp-role { color: #1565c0; }
+        .comp-tag-predicate { background: #e8f5e9; border-color: #a5d6a7; } .comp-tag-predicate .comp-role { color: #2e7d32; }
+        .comp-tag-predicative { background: #e8f5e9; border-color: #a5d6a7; } .comp-tag-predicative .comp-role { color: #2e7d32; }
+        .comp-tag-object { background: #fff3e0; border-color: #ffcc80; } .comp-tag-object .comp-role { color: #e65100; }
+        .comp-tag-attributive { background: #f3e5f5; border-color: #ce93d8; } .comp-tag-attributive .comp-role { color: #6a1b9a; }
+        .comp-tag-adverbial { background: #e0f2f1; border-color: #80cbc4; } .comp-tag-adverbial .comp-role { color: #00695c; }
+        .comp-tag-complement { background: #fce4ec; border-color: #ef9a9a; } .comp-tag-complement .comp-role { color: #c62828; }
+        .comp-tag-verb { background: #e8f5e9; border-color: #81c784; } .comp-tag-verb .comp-role { color: #1b5e20; }
+        .comp-tag-noun { background: #e3f2fd; border-color: #64b5f6; } .comp-tag-noun .comp-role { color: #0d47a1; }
+        .comp-tag-default { background: #f5f5f5; border-color: #ccc; } .comp-tag-default .comp-role { color: #666; }
         .difficulty-badge { display: inline-block; margin-top: 8px; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }
         .difficulty-badge.beginner { background: #e8f5e9; color: #2e7d32; }
         .difficulty-badge.intermediate { background: #fff3e0; color: #e65100; }
@@ -517,7 +561,8 @@ async def on_fetch(request, env):
                     data.components.forEach(c => {
                         const role = typeof c === 'object' ? (c.role || '') : '';
                         const text = typeof c === 'object' ? (c.text || c) : c;
-                        html += '<span class="component-tag"><span class="comp-role">' + role + '</span> ' + text + '</span>';
+                        const roleCls = ROLE_COLORS[role] || 'default';
+                        html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + role + '</span> ' + text + '</span>';
                     });
                     html += '</div>';
                 }
@@ -585,7 +630,8 @@ async def on_fetch(request, env):
                         if (ex.components && ex.components.length) {
                             html += '<div class="example-components">';
                             ex.components.forEach(c => {
-                                html += '<span class="component-tag"><span class="comp-role">' + c.role + '</span> ' + c.text + '</span>';
+                                const roleCls = ROLE_COLORS[c.role] || 'default';
+                                html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + c.role + '</span> ' + c.text + '</span>';
                             });
                             html += '</div>';
                         }

@@ -13,7 +13,7 @@ import urllib.error
 import ssl
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import API_KEY, BASE_URL, auto_detect_task_type, select_model, TokenManager, TOKENS
+from config import API_KEY, BASE_URL, DASHSCOPE_MODELS, auto_detect_task_type, select_model, TokenManager, TOKENS
 
 # ============ 系统提示词 ============
 
@@ -292,7 +292,12 @@ COMMON_PATTERNS = {
 # ============ 核心功能 ============
 
 def _extract_json(text: str) -> dict:
-    """从 AI 回复中提取 JSON"""
+    """从 AI 回复中提取 JSON（支持预处理去除 <think> 块等）"""
+    # 预处理：剥离 <think> 思考块
+    cleaned = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+    if cleaned:
+        text = cleaned
+
     # 尝试直接解析
     try:
         return json.loads(text.strip())
@@ -318,8 +323,8 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"无法从回复中提取JSON: {text[:200]}")
 
 
-def _call_api(prompt: str, system_prompt: str, model_id: str = "MiniMax-M2.7-highspeed") -> dict:
-    """调用 moreai.cloud API（OpenAI 兼容格式）"""
+def _call_single_model(prompt: str, system_prompt: str, model_id: str) -> dict:
+    """调用单个模型的 API"""
     url = f"{BASE_URL}/chat/completions"
     payload = json.dumps({
         "model": model_id,
@@ -336,15 +341,9 @@ def _call_api(prompt: str, system_prompt: str, model_id: str = "MiniMax-M2.7-hig
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }, method="POST")
 
-    try:
-        ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
-            result = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        raise Exception(f"API错误 (HTTP {e.code}): {body}")
-    except urllib.error.URLError as e:
-        raise Exception(f"API连接失败: {e.reason}")
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
+        result = json.loads(resp.read().decode())
 
     choices = result.get("choices", [])
     if not choices:
@@ -352,6 +351,30 @@ def _call_api(prompt: str, system_prompt: str, model_id: str = "MiniMax-M2.7-hig
 
     content = choices[0].get("message", {}).get("content", "")
     return _extract_json(content)
+
+
+def _call_api(prompt: str, system_prompt: str, model_id: str = None) -> dict:
+    """调用 AI API，支持多模型互备切换（依次尝试，失败自动切换到下一个）"""
+    if model_id:
+        models = [model_id]
+    else:
+        models = DASHSCOPE_MODELS
+
+    errors = []
+    for i, m in enumerate(models):
+        try:
+            return _call_single_model(prompt, system_prompt, m)
+        except Exception as e:
+            err_msg = f"[{m}] {e}"
+            errors.append(err_msg)
+            if i < len(models) - 1:
+                print(f"⚠️ {m} 失败，切换到下一个模型: {err_msg}")
+            continue
+
+    raise Exception(
+        f"❌ 所有模型均失败 ({len(models)}个):\n" +
+        "\n".join(errors)
+    )
 
 
 def analyze_sentence(sentence: str, language: str = None) -> dict:
