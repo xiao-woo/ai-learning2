@@ -207,6 +207,534 @@ async def _call_bailian(prompt: str, system_prompt: str, api_key: str, model: st
     return {"error": f"所有模型均失败 ({len(models)}个尝试): {' | '.join(errors)}"}
 
 
+async def _call_wanx(prompt: str, api_key: str, model: str = "wanx-poster-generation-v1",
+
+
+                     sentence: str = "", language: str = "en") -> dict:
+
+
+    """调用 DashScope 图像生成模型。按优先级自动尝试多个模型。"""
+
+
+    key = api_key or DASHSCOPE_API_KEY
+
+
+    if not key:
+
+
+        return {"error": "API_KEY 未配置"}
+
+
+
+
+
+    # ── 模型分类 ──
+
+
+    POSTER_MODELS = {"wanx-poster-generation-v1"}       # 海报格式 + 异步轮询
+
+
+    ASYNC_MODELS = {                                     # prompt/messages + 异步轮询
+
+
+        "qwen-image-plus", "qwen-image", "qwen-image-plus-2026-01-09",
+
+
+        "wan2.6-image",
+
+
+    }
+
+
+    SYNC_MODELS = {                                      # messages + 同步调用
+
+
+        "qwen-image-2.0-pro", "qwen-image-2.0-pro-2026-04-22",
+
+
+        "qwen-image-2.0-pro-2026-03-03",
+
+
+        "qwen-image-2.0", "qwen-image-2.0-2026-03-03",
+
+
+        "qwen-image-max", "qwen-image-max-2025-12-30",
+
+
+    }
+
+
+
+
+
+    ASYNC_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
+
+
+    SYNC_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+
+
+
+
+
+    errors = []
+
+
+
+
+
+    # ── 构建尝试顺序：用户指定模型优先，再按类型排 ──
+
+
+    models_to_try = [model]
+
+
+    for m in [*POSTER_MODELS, *ASYNC_MODELS, *SYNC_MODELS]:
+
+
+        if m not in models_to_try:
+
+
+            models_to_try.append(m)
+
+
+
+
+
+    for m in models_to_try:
+
+
+        try:
+
+
+            # ── 根据模型分类构建 payload ──
+
+
+            if m in POSTER_MODELS:
+
+
+                poster_title = sentence if sentence else prompt[:50]
+
+
+                payload = json.dumps({
+
+
+                    "model": m,
+
+
+                    "input": {
+
+
+                        "title": poster_title,
+
+
+                        "sub_title": f"Language: {language}",
+
+
+                        "body_text": f"A fun illustration for: {poster_title}",
+
+
+                        "prompt_text_zh": prompt,
+
+
+                        "wh_ratios": "横版",
+
+
+                        "generate_mode": "generate",
+
+
+                        "generate_num": 1
+
+
+                    },
+
+
+                    "parameters": {}
+
+
+                })
+
+
+            elif m in ASYNC_MODELS:
+
+
+                if m == "wan2.6-image":
+
+
+                    # wan2.6-image: messages 格式
+
+
+                    payload_body = {
+
+
+                        "model": m,
+
+
+                        "input": {
+
+
+                            "messages": [{"role": "user", "content": [{"text": prompt}]}]
+
+
+                        },
+
+
+                        "parameters": {"size": "1024*1024", "enable_interleave": True, "max_images": 1}
+
+
+                    }
+
+
+                else:
+
+
+                    # qwen-image-plus / qwen-image 异步格式: input.prompt
+
+
+                    payload_body = {
+
+
+                        "model": m,
+
+
+                        "input": {"prompt": prompt},
+
+
+                        "parameters": {"size": "1024*1024", "n": 1, "prompt_extend": True, "watermark": False}
+
+
+                    }
+
+
+                payload = json.dumps(payload_body)
+
+
+            else:
+
+
+                # 同步模型: messages 格式
+
+
+                payload = json.dumps({
+
+
+                    "model": m,
+
+
+                    "input": {
+
+
+                        "messages": [{"role": "user", "content": [{"text": prompt}]}]
+
+
+                    },
+
+
+                    "parameters": {
+
+
+                        "size": "1024*1024",
+
+
+                        "prompt_extend": True,
+
+
+                        "watermark": False,
+
+
+                        "negative_prompt": "低质量，模糊，扭曲，畸形"
+
+
+                    }
+
+
+                })
+
+
+
+
+
+            # ── 发送请求 ──
+
+
+            if m in SYNC_MODELS:
+
+
+                # 同步调用：无异步头，无轮询
+
+
+                resp = await fetch(
+
+
+                    SYNC_URL,
+
+
+                    method="POST",
+
+
+                    headers=[
+
+
+                        ["Authorization", "Bearer " + key],
+
+
+                        ["Content-Type", "application/json"]
+
+
+                    ],
+
+
+                    body=payload
+
+
+                )
+
+
+                if resp.status != 200:
+
+
+                    errors.append(f"[{m}] 调用失败 HTTP {resp.status}")
+
+
+                    continue
+
+
+                resp_data = (await resp.json()).to_py()
+
+
+                output = resp_data.get("output", {})
+
+
+                choices = output.get("choices", [])
+
+
+                if choices:
+
+
+                    content = choices[0].get("message", {}).get("content", [])
+
+
+                    for item in content:
+
+
+                        if isinstance(item, dict):
+
+
+                            img_url = item.get("image", "")
+
+
+                            if img_url:
+
+
+                                return {"image_url": img_url, "model": m}
+
+
+                errors.append(f"[{m}] 响应中无图片")
+
+
+                continue
+
+
+            else:
+
+
+                # 异步调用：提交任务 + 轮询
+
+
+                resp = await fetch(
+
+
+                    ASYNC_URL,
+
+
+                    method="POST",
+
+
+                    headers=[
+
+
+                        ["Authorization", "Bearer " + key],
+
+
+                        ["Content-Type", "application/json"],
+
+
+                        ["X-DashScope-Async", "enable"]
+
+
+                    ],
+
+
+                    body=payload
+
+
+                )
+
+
+                if resp.status != 200:
+
+
+                    errors.append(f"[{m}] 提交失败 HTTP {resp.status}")
+
+
+                    continue
+
+
+                resp_data = (await resp.json()).to_py()
+
+
+                output = resp_data.get("output", {})
+
+
+                task_id = output.get("task_id")
+
+
+                if not task_id:
+
+
+                    errors.append(f"[{m}] 无 task_id")
+
+
+                    continue
+
+
+
+
+
+                # 轮询等待任务完成（最多 60 秒）
+
+
+                query_url = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
+
+
+                max_polls = 20
+
+
+                import asyncio
+
+
+                for poll in range(max_polls):
+
+
+                    await asyncio.sleep(3)
+
+
+                    qresp = await fetch(
+
+
+                        query_url,
+
+
+                        method="GET",
+
+
+                        headers=[["Authorization", "Bearer " + key]]
+
+
+                    )
+
+
+                    if qresp.status != 200:
+
+
+                        continue
+
+
+                    qdata = (await qresp.json()).to_py()
+
+
+                    qoutput = qdata.get("output", {})
+
+
+                    status = qoutput.get("task_status", "")
+
+
+                    if status == "SUCCEEDED":
+
+
+                        # 优先 results[].url (poster / qwen-image async 格式)
+
+
+                        results = qoutput.get("results", [])
+
+
+                        if results:
+
+
+                            img_url = results[0].get("url", "")
+
+
+                            if img_url:
+
+
+                                return {"image_url": img_url, "model": m, "task_id": task_id}
+
+
+                        # 回退 choices[].message.content[].image (wan2.6-image 格式)
+
+
+                        choices = qoutput.get("choices", [])
+
+
+                        if choices:
+
+
+                            content = choices[0].get("message", {}).get("content", [])
+
+
+                            for item in content:
+
+
+                                if isinstance(item, dict) and item.get("type") == "image":
+
+
+                                    img_url = item.get("image", "")
+
+
+                                    if img_url:
+
+
+                                        return {"image_url": img_url, "model": m, "task_id": task_id}
+
+
+                        errors.append(f"[{m}] 无图片结果")
+
+
+                        break
+
+
+                    elif status in ("FAILED", "CANCELED"):
+
+
+                        err_msg = qdata.get("message", qoutput.get("message", str(qoutput)))
+
+
+                        errors.append(f"[{m}] 任务{status}: {err_msg}")
+
+
+                        break
+
+
+                else:
+
+
+                    errors.append(f"[{m}] 轮询超时")
+
+
+
+
+
+        except Exception as e:
+
+
+            errors.append(f"[{m}] 异常: {str(e)[:200]}")
+
+
+
+
+
+    return {"error": f"所有模型均失败 ({len(errors)}次尝试): {' | '.join(errors)}"}
+
+
 def get_pattern_by_id(pattern_id: str) -> dict:
     """根据 ID 获取句型"""
     for lang_patterns in COMMON_PATTERNS.values():
@@ -355,7 +883,7 @@ async def _kb_get_detail(env, entry_id: str):
 
 
 async def on_fetch(request, env):
-    """Cloudflare Worker 主入口"""
+    """Cloudflare Worker 主入口 - 统一路由分发"""
     global API_KEY
     API_KEY = env.API_KEY if hasattr(env, 'API_KEY') else DASHSCOPE_API_KEY
 
@@ -375,6 +903,12 @@ async def on_fetch(request, env):
     try:
         url = URL.new(request.url)
         path_parts = url.pathname.split("/")[1:]
+        
+        # ========== 单词学习系统路由 ==========
+        if len(path_parts) >= 1 and path_parts[0] == "word":
+            # 导入单词学习模块并委托请求
+            from word_worker import on_fetch as word_on_fetch
+            return await word_on_fetch(request, env)
 
         method = request.method
         content_type = request.headers.get("content-type", "")
@@ -411,6 +945,26 @@ async def on_fetch(request, env):
                         pattern = pattern_info["pattern"]
                         language = pattern_info["id"][:2]
                     result = await generate_examples_handler(pattern, language, count, difficulty, API_KEY)
+                    return make_response(result, 200, cors_headers)
+
+                elif endpoint == "illustrate" and method == "POST":
+                    text = body.get("text", "") if body else ""
+                    language = body.get("language", "en") if body else "en"
+                    model = body.get("model") if body else None
+                    if not text:
+                        return make_response({"error": "text 参数必填"}, 400, cors_headers)
+                    # 构造适合 wanx 的 prompt
+                    lang_label = "English" if language == "en" else "Chinese"
+                    prompt_text = (
+                        f"Create a cute, colorful, fun illustration for language learning. "
+                        f"The sentence is in {lang_label}: \"{text}\". "
+                        f"Design a lively cartoon-style scene that depicts this sentence in a humorous, "
+                        f"educational, delightful way. Use bright colors, cute characters, "
+                        f"and a warm friendly atmosphere. Style: kawaii cartoon, digital illustration, "
+                        f"vibrant colors, child-friendly."
+                    )
+                    selected_model = model or "wanx-poster-generation-v1"
+                    result = await _call_wanx(prompt_text, API_KEY, selected_model, sentence=text, language=language)
                     return make_response(result, 200, cors_headers)
 
                 elif endpoint == "exercises" and method == "POST":
@@ -478,7 +1032,79 @@ async def on_fetch(request, env):
             else:
                 return make_response({"error": "API 路由未找到"}, 404, cors_headers)
 
-        # 返回 HTML 页面
+        # ========== 页面路由 ==========
+        # 统一入口页面 (/)
+        if len(path_parts) == 0 or (len(path_parts) == 1 and path_parts[0] == ""):
+            index_html = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Learning - 智能语言学习平台</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { max-width: 900px; padding: 40px 20px; }
+        header { text-align: center; margin-bottom: 50px; }
+        header h1 { font-size: 3em; color: white; margin-bottom: 15px; text-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+        header p { color: rgba(255,255,255,0.9); font-size: 1.2em; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; }
+        .card { background: white; border-radius: 20px; padding: 35px; text-align: center; box-shadow: 0 15px 50px rgba(0,0,0,0.15); transition: all 0.3s; cursor: pointer; text-decoration: none; color: inherit; }
+        .card:hover { transform: translateY(-10px); box-shadow: 0 25px 60px rgba(0,0,0,0.2); }
+        .card-icon { font-size: 4em; margin-bottom: 20px; }
+        .card h2 { font-size: 1.5em; color: #333; margin-bottom: 15px; }
+        .card p { color: #666; line-height: 1.6; margin-bottom: 20px; }
+        .card-tags { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+        .tag { background: #f0f4ff; color: #667eea; padding: 5px 12px; border-radius: 15px; font-size: 0.85em; }
+        footer { text-align: center; margin-top: 50px; color: rgba(255,255,255,0.7); font-size: 0.9em; }
+        @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } header h1 { font-size: 2em; } .card { padding: 25px; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎓 AI Learning</h1>
+            <p>智能语言学习平台 · 让学习变得有趣</p>
+        </header>
+        <div class="cards">
+            <a href="/sentence" class="card">
+                <div class="card-icon">📖</div>
+                <h2>句子结构学习</h2>
+                <p>智能分析句子结构，生成例句和练习题，支持英语和汉语双语学习</p>
+                <div class="card-tags">
+                    <span class="tag">句子分析</span>
+                    <span class="tag">例句生成</span>
+                    <span class="tag">练习题</span>
+                    <span class="tag">句型库</span>
+                </div>
+            </a>
+            <a href="/word" class="card">
+                <div class="card-icon">🔤</div>
+                <h2>趣味单词拆解</h2>
+                <p>词根词缀拆解，词源故事，联想记忆技巧，让单词记忆不再枯燥</p>
+                <div class="card-tags">
+                    <span class="tag">词根词缀</span>
+                    <span class="tag">词源故事</span>
+                    <span class="tag">记忆技巧</span>
+                    <span class="tag">趣味练习</span>
+                </div>
+            </a>
+        </div>
+        <footer>
+            Powered by 百炼大模型 (Qwen) · 部署于 Cloudflare Workers
+        </footer>
+    </div>
+</body>
+</html>"""
+            html_headers = Headers.new()
+            html_headers.set("Content-Type", "text/html; charset=utf-8")
+            for key, value in cors_headers.items():
+                html_headers.set(key, value)
+            return Response.new(index_html, status=200, headers=html_headers)
+
+        # 句子学习系统页面 (/sentence)
+        if len(path_parts) == 1 and path_parts[0] == "sentence":
+            # 返回句子学习系统 HTML 页面
         html_content = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -489,9 +1115,12 @@ async def on_fetch(request, env):
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
         .container { max-width: 900px; margin: 0 auto; padding: 20px; }
-        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; border-radius: 10px; margin-bottom: 20px; text-align: center; }
+        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; border-radius: 10px; margin-bottom: 20px; text-align: center; position: relative; }
         header h1 { font-size: 2em; margin-bottom: 10px; }
         header p { opacity: 0.9; }
+        .nav-links { position: absolute; top: 15px; right: 20px; }
+        .nav-links a { color: rgba(255,255,255,0.9); text-decoration: none; padding: 6px 14px; border-radius: 20px; background: rgba(255,255,255,0.15); font-size: 13px; margin-left: 8px; transition: all 0.2s; }
+        .nav-links a:hover { background: rgba(255,255,255,0.25); }
         .card { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
         .tab { padding: 10px 20px; border: none; background: #e0e0e0; border-radius: 5px; cursor: pointer; font-size: 14px; transition: all 0.3s; }
@@ -519,6 +1148,8 @@ async def on_fetch(request, env):
         .example-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; position: relative; }
         .btn-save-single { background: none; border: 1px solid #d6e4ff; border-radius: 4px; padding: 2px 6px; font-size: 13px; cursor: pointer; opacity: 0.5; transition: all 0.15s ease; line-height: 1.4; }
         .btn-save-single:hover { opacity: 1; background: #e3f2fd; border-color: #667eea; transform: translateY(-1px); }
+        .btn-illustrate { background: linear-gradient(135deg, #fce4ec, #f3e5f5); border: 1.5px solid #f48fb1; border-radius: 4px; padding: 2px 6px; font-size: 13px; cursor: pointer; opacity: 0.6; transition: all 0.15s ease; line-height: 1.4; margin-left: 4px; }
+        .btn-illustrate:hover { opacity: 1; background: linear-gradient(135deg, #f8bbd0, #e1bee7); border-color: #ec407a; transform: translateY(-1px) scale(1.05); box-shadow: 0 2px 8px rgba(236,64,122,0.3); }
         .example-sentence { font-size: 16px; font-weight: 600; color: #333; margin-bottom: 4px; }
         .example-translation { font-size: 14px; color: #888; margin-bottom: 8px; }
         .example-components { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
@@ -596,10 +1227,32 @@ async def on_fetch(request, env):
         .modal-header h3 { font-size:16px; }
         .modal-close { background:none; border:none; font-size:20px; cursor:pointer; color:#888; padding:0 5px; }
         .modal-body { padding:20px; }
+        /* 图文并茂弹窗 */
+        .ill-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.55); z-index:2000; align-items:center; justify-content:center; padding:20px; animation:fadeIn 0.3s ease; }
+        .ill-box { background:linear-gradient(170deg, #fff5f9, #f3e5f5, #e8f5e9); border-radius:20px; max-width:620px; width:100%; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25); padding:25px; position:relative; animation:bounceIn 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55); border:3px solid rgba(255,255,255,0.8); }
+        .ill-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:15px; }
+        .ill-header h3 { font-size:18px; background:linear-gradient(135deg, #ec407a, #ab47bc); -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:flex; align-items:center; gap:8px; }
+        .ill-close { background:none; border:2px solid #f48fb1; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#ec407a; font-size:16px; font-weight:700; transition:all 0.2s; }
+        .ill-close:hover { background:#fce4ec; transform:rotate(90deg); }
+        .ill-image-wrap { background:white; border-radius:16px; padding:10px; box-shadow:0 4px 20px rgba(0,0,0,0.08); margin-bottom:15px; }
+        .ill-image-wrap img { width:100%; border-radius:12px; display:block; }
+        .ill-caption { font-size:14px; color:#666; text-align:center; padding:8px 12px; background:rgba(255,255,255,0.7); border-radius:12px; line-height:1.6; }
+        .ill-caption .ill-sentence { font-weight:600; color:#333; font-size:15px; }
+        .ill-loading { text-align:center; padding:40px 20px; }
+        .ill-loading .spinner { display:inline-block; width:48px; height:48px; border:4px solid #f3e5f5; border-top-color:#ec407a; border-radius:50%; animation:spin 0.8s linear infinite; margin-bottom:15px; }
+        .ill-loading p { color:#888; font-size:14px; }
+        .ill-error { text-align:center; padding:30px; color:#dc3545; font-size:14px; }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes bounceIn { 0%{transform:scale(0.3);opacity:0} 50%{transform:scale(1.05)} 70%{transform:scale(0.95)} 100%{transform:scale(1);opacity:1} }
+        @keyframes spin { to{transform:rotate(360deg)} }
     </style>
 <body>
     <div class="container">
         <header>
+            <div class="nav-links">
+                <a href="/">🏠 首页</a>
+                <a href="/word">🔤 单词学习</a>
+            </div>
             <h1>🤖 AI Learning</h1>
             <p>智能句子结构分析与学习系统 · 支持英语、汉语</p>
         </header>
@@ -640,9 +1293,9 @@ async def on_fetch(request, env):
                 <div class="input-group">
                     <label>难度级别</label>
                     <div class="difficulty-options">
-                        <label class="diff-option"><input type="radio" name="example-difficulty" value="一般" checked> 一般</label>
-                        <label class="diff-option"><input type="radio" name="example-difficulty" value="偏难"> 偏难</label>
-                        <label class="diff-option"><input type="radio" name="example-difficulty" value="极难"> 极难</label>
+                <label class="diff-option"><input type="radio" name="example-difficulty" value="一般" checked> 一般</label>
+                <label class="diff-option"><input type="radio" name="example-difficulty" value="偏难"> 偏难</label>
+                <label class="diff-option"><input type="radio" name="example-difficulty" value="极难"> 极难</label>
                     </div>
                 </div>
                 <button class="btn btn-primary" id="examples-btn">✨ 生成例句</button>
@@ -667,9 +1320,9 @@ async def on_fetch(request, env):
                 <div class="input-group">
                     <label>难度级别</label>
                     <div class="difficulty-options">
-                        <label class="diff-option"><input type="radio" name="exercise-difficulty" value="一般" checked> 一般</label>
-                        <label class="diff-option"><input type="radio" name="exercise-difficulty" value="偏难"> 偏难</label>
-                        <label class="diff-option"><input type="radio" name="exercise-difficulty" value="极难"> 极难</label>
+                <label class="diff-option"><input type="radio" name="exercise-difficulty" value="一般" checked> 一般</label>
+                <label class="diff-option"><input type="radio" name="exercise-difficulty" value="偏难"> 偏难</label>
+                <label class="diff-option"><input type="radio" name="exercise-difficulty" value="极难"> 极难</label>
                     </div>
                 </div>
                 <button class="btn btn-primary" id="exercises-btn">🎯 生成练习题</button>
@@ -681,12 +1334,12 @@ async def on_fetch(request, env):
             <div class="card">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                     <div class="input-group" style="flex:1;min-width:140px;">
-                        <label>语言</label>
-                        <select id="pattern-lang"><option value="">全部</option><option value="en">English</option><option value="zh">中文</option></select>
+                <label>语言</label>
+                <select id="pattern-lang"><option value="">全部</option><option value="en">English</option><option value="zh">中文</option></select>
                     </div>
                     <div class="input-group" style="flex:1;min-width:140px;">
-                        <label>难度</label>
-                        <select id="pattern-level"><option value="">全部</option><option value="beginner">初中</option><option value="intermediate">高中</option><option value="advanced">大学</option></select>
+                <label>难度</label>
+                <select id="pattern-level"><option value="">全部</option><option value="beginner">初中</option><option value="intermediate">高中</option><option value="advanced">大学</option></select>
                     </div>
                 </div>
                 <button class="btn btn-primary" id="patterns-btn">📚 加载句型库</button>
@@ -809,10 +1462,10 @@ async def on_fetch(request, env):
                     html += '<div class="analysis-section"><strong>🧩 成分分析:</strong></div>';
                     html += '<div class="example-components">';
                     data.components.forEach(c => {
-                        const role = typeof c === 'object' ? (c.role || '') : '';
-                        const text = typeof c === 'object' ? (c.text || c) : c;
-                        const roleCls = ROLE_COLORS[role] || 'default';
-                        html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + role + '</span> ' + text + '</span>';
+                const role = typeof c === 'object' ? (c.role || '') : '';
+                const text = typeof c === 'object' ? (c.text || c) : c;
+                const roleCls = ROLE_COLORS[role] || 'default';
+                html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + role + '</span> ' + text + '</span>';
                     });
                     html += '</div>';
                 }
@@ -820,7 +1473,7 @@ async def on_fetch(request, env):
                     html += '<div class="analysis-section" style="margin-top:10px"><strong>🔑 关键词组:</strong></div>';
                     html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">';
                     data.key_phrases.forEach(kp => {
-                        html += '<span class="component-tag">' + kp + '</span>';
+                html += '<span class="component-tag">' + kp + '</span>';
                     });
                     html += '</div>';
                 }
@@ -874,26 +1527,27 @@ async def on_fetch(request, env):
                 if (data.examples && data.examples.length) {
                     html += '<div class="examples-list">';
                     data.examples.forEach((ex, i) => {
-                        html += '<div class="example-card">';
-                        html += '<div class="example-card-header">';
-                        html += '<div class="example-num">#' + (i+1) + '</div>';
-                        html += '<button class="btn-save-single" data-action="save-example-single" data-index="' + i + '" title="保存此例句到知识库">📌</button>';
-                        html += '</div>';
-                        html += '<div class="example-sentence">' + highlightSentence(ex.sentence, ex.components) + '</div>';
-                        html += '<div class="example-translation">' + ex.translation + '</div>';
-                        if (ex.components && ex.components.length) {
-                            html += '<div class="example-components">';
-                            ex.components.forEach(c => {
-                                const roleCls = ROLE_COLORS[c.role] || 'default';
-                                html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + c.role + '</span> ' + c.text + '</span>';
-                            });
-                            html += '</div>';
-                        }
-                        if (ex.difficulty) {
-                            const badges = {'beginner': '初级', 'intermediate': '中级', 'advanced': '高级'};
-                            html += '<span class="difficulty-badge ' + ex.difficulty + '">' + (badges[ex.difficulty] || ex.difficulty) + '</span>';
-                        }
-                        html += '</div>';
+                html += '<div class="example-card">';
+                html += '<div class="example-card-header">';
+                html += '<div class="example-num">#' + (i+1) + '</div>';
+                html += '<button class="btn-save-single" data-action="save-example-single" data-index="' + i + '" title="保存此例句到知识库">📌</button>';
+                html += '<button class="btn-illustrate" data-action="illustrate-example" data-index="' + i + '" title="为此例句生成图文并茂插画">🎨</button>';
+                html += '</div>';
+                html += '<div class="example-sentence">' + highlightSentence(ex.sentence, ex.components) + '</div>';
+                html += '<div class="example-translation">' + ex.translation + '</div>';
+                    if (ex.components && ex.components.length) {
+                html += '<div class="example-components">';
+                ex.components.forEach(c => {
+                const roleCls = ROLE_COLORS[c.role] || 'default';
+                html += '<span class="component-tag comp-tag-' + roleCls + '"><span class="comp-role">' + c.role + '</span> ' + c.text + '</span>';
+                });
+                html += '</div>';
+                }
+                    if (ex.difficulty) {
+                const badges = {'beginner': '初级', 'intermediate': '中级', 'advanced': '高级'};
+                html += '<span class="difficulty-badge ' + ex.difficulty + '">' + (badges[ex.difficulty] || ex.difficulty) + '</span>';
+                }
+                html += '</div>';
                     });
                     html += '</div>';
                 }
@@ -904,6 +1558,7 @@ async def on_fetch(request, env):
                 result.innerHTML = html;
                 // 保存当前数据供「保存」按钮使用
                 window._lastExamplesData = data;
+                window._illustrations = window._illustrations || {};
             } catch (e) {
                 result.className = 'result error';
                 result.innerHTML = '❌ 错误: ' + e.message;
@@ -945,23 +1600,23 @@ async def on_fetch(request, env):
                     html += '</div>';
                     html += '<div class="exercise-question">' + ex.question + '</div>';
                     if (ex.options) {
-                        html += '<div class="exercise-options">';
-                        const letters = ['A', 'B', 'C', 'D'];
-                        letters.forEach(letter => {
-                            if (ex.options[letter]) {
-                                const isCorrect = ex.answer === letter;
-                                html += '<div class="option-row' + (isCorrect ? ' option-correct' : '') + '">';
-                                html += '<span class="option-letter">' + letter + '</span>';
-                                html += '<span class="option-text">' + ex.options[letter] + '</span>';
-                                if (isCorrect) html += '<span class="option-check">✅</span>';
-                                html += '</div>';
-                            }
-                        });
-                        html += '</div>';
+                html += '<div class="exercise-options">';
+                const letters = ['A', 'B', 'C', 'D'];
+                letters.forEach(letter => {
+                    if (ex.options[letter]) {
+                const isCorrect = ex.answer === letter;
+                html += '<div class="option-row' + (isCorrect ? ' option-correct' : '') + '">';
+                html += '<span class="option-letter">' + letter + '</span>';
+                html += '<span class="option-text">' + ex.options[letter] + '</span>';
+                    if (isCorrect) html += '<span class="option-check">✅</span>';
+                html += '</div>';
+                }
+                });
+                html += '</div>';
                     }
                     html += '<div class="exercise-explanation">💡 ' + ex.explanation + '</div>';
                     if (ex.answer) {
-                        html += '<div class="exercise-answer">✅ 正确答案: <strong>' + ex.answer + '</strong></div>';
+                html += '<div class="exercise-answer">✅ 正确答案: <strong>' + ex.answer + '</strong></div>';
                     }
                     html += '</div>';
                 });
@@ -993,9 +1648,9 @@ async def on_fetch(request, env):
                 const levelMap = {beginner: '初中', intermediate: '高中', advanced: '大学'};
                 result.innerHTML = patterns.map(p => `
                     <div class="pattern-item">
-                        <div class="name">${p.id} - ${p.name}</div>
-                        <div class="meta"><span class="level-tag level-${p.level}">${levelMap[p.level] || p.level}</span> · ${p.pattern}</div>
-                        <div class="meta">例句: ${p.example}</div>
+                <div class="name">${p.id} - ${p.name}</div>
+                <div class="meta"><span class="level-tag level-${p.level}">${levelMap[p.level] || p.level}</span> · ${p.pattern}</div>
+                <div class="meta">例句: ${p.example}</div>
                     </div>
                 `).join('');
             } catch (e) {
@@ -1015,12 +1670,12 @@ async def on_fetch(request, env):
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        type: 'examples',
-                        title: '例句 - ' + (data.structure_pattern || ''),
-                        content: data,
-                        structure_pattern: data.structure_pattern || '',
-                        examples_count: data.examples.length,
-                        learning_tips: data.learning_tips || ''
+                type: 'examples',
+                title: '例句 - ' + (data.structure_pattern || ''),
+                    content: data,
+                structure_pattern: data.structure_pattern || '',
+                examples_count: data.examples.length,
+                learning_tips: data.learning_tips || ''
                     })
                 });
                 const result = await resp.json();
@@ -1045,11 +1700,11 @@ async def on_fetch(request, env):
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        type: 'exercises',
-                        title: '练习题 - ' + (data.structure_pattern || ''),
-                        content: data,
-                        structure_pattern: data.structure_pattern || '',
-                        exercises_count: data.exercises.length
+                type: 'exercises',
+                title: '练习题 - ' + (data.structure_pattern || ''),
+                    content: data,
+                structure_pattern: data.structure_pattern || '',
+                exercises_count: data.exercises.length
                     })
                 });
                 const result = await resp.json();
@@ -1071,17 +1726,23 @@ async def on_fetch(request, env):
                 return;
             }
             const example = data.examples[index];
+            const ill = (window._illustrations || {})[index];
+            const payload = {
+                type: 'example',
+                title: '例句 - ' + (data.structure_pattern || '') + ' (' + example.sentence.substring(0, 30) + ')',
+                content: { structure_pattern: data.structure_pattern, examples: [example], learning_tips: data.learning_tips || '' },
+                structure_pattern: data.structure_pattern || '',
+                examples_count: 1
+            };
+            if (ill) {
+                payload.illustration_url = ill.image_url;
+                payload.illustration_model = ill.model;
+            }
             try {
                 const resp = await fetch(API_BASE + '/knowledge', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        type: 'example',
-                        title: '例句 - ' + (data.structure_pattern || '') + ' (' + example.sentence.substring(0, 30) + ')',
-                        content: { structure_pattern: data.structure_pattern, examples: [example], learning_tips: data.learning_tips || '' },
-                        structure_pattern: data.structure_pattern || '',
-                        examples_count: 1
-                    })
+                    body: JSON.stringify(payload)
                 });
                 const result = await resp.json();
                 if (result.success) {
@@ -1091,6 +1752,65 @@ async def on_fetch(request, env):
                 }
             } catch (e) {
                 alert('❌ 保存失败: ' + e.message);
+            }
+        }
+
+        // ── 图文并茂 ──
+        function showIllustrationModal(html) {
+            let overlay = document.getElementById('illustration-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'illustration-overlay';
+                overlay.className = 'ill-overlay';
+                overlay.innerHTML = '<div class="ill-box"><div class="ill-header"><h3>🎨 图文并茂</h3><button class="ill-close" id="ill-close-btn">✕</button></div><div id="ill-body"></div></div>';
+                document.body.appendChild(overlay);
+                document.getElementById('ill-close-btn').addEventListener('click', function() {
+                    overlay.style.display = 'none';
+                });
+                overlay.addEventListener('click', function(e) {
+                    if (e.target === overlay) overlay.style.display = 'none';
+                });
+            }
+            document.getElementById('ill-body').innerHTML = html;
+            overlay.style.display = 'flex';
+        }
+
+        async function illustrateExample(index) {
+            const data = window._lastExamplesData;
+            if (!data || !data.examples || !data.examples[index]) return;
+            const example = data.examples[index];
+            const language = document.getElementById('example-lang')?.value || 'en';
+
+            // 如果已有插图，直接展示
+            const ill = (window._illustrations || {})[index];
+            if (ill && ill.image_url) {
+                showIllustrationModal('<div class="ill-image-wrap"><img src="' + ill.image_url + '" alt="illustration"></div><div class="ill-caption"><div class="ill-sentence">' + esc(example.sentence) + '</div><div style="margin-top:4px;">' + esc(example.translation) + '</div><div style="margin-top:6px;font-size:12px;color:#999;">模型: ' + ill.model + '</div></div>');
+                return;
+            }
+
+            // 显示加载
+            showIllustrationModal('<div class="ill-loading"><div class="spinner"></div><p>🎨 正在绘制插图...</p><p style="font-size:12px;color:#aaa;margin-top:4px;">' + esc(example.sentence) + '</p></div>');
+
+            try {
+                const resp = await fetch(API_BASE + '/illustrate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                text: example.sentence,
+                language: language
+                    })
+                });
+                const result = await resp.json();
+                if (result.error) {
+                    showIllustrationModal('<div class="ill-error">❌ 生成失败: ' + esc(result.error) + '</div>');
+                    return;
+                }
+                // 缓存插图
+                window._illustrations = window._illustrations || {};
+                window._illustrations[index] = { image_url: result.image_url, model: result.model };
+                showIllustrationModal('<div class="ill-image-wrap"><img src="' + result.image_url + '" alt="illustration"></div><div class="ill-caption"><div class="ill-sentence">' + esc(example.sentence) + '</div><div style="margin-top:4px;">' + esc(example.translation) + '</div><div style="margin-top:6px;font-size:12px;color:#999;">模型: ' + (result.model || 'wanx') + '</div></div>');
+            } catch (e) {
+                showIllustrationModal('<div class="ill-error">❌ 请求失败: ' + esc(e.message) + '</div>');
             }
         }
 
@@ -1106,11 +1826,11 @@ async def on_fetch(request, env):
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        type: 'exercise',
-                        title: '练习题 - ' + (data.structure_pattern || '') + ' (' + exercise.question.substring(0, 30) + ')',
-                        content: { structure_pattern: data.structure_pattern, exercises: [exercise] },
-                        structure_pattern: data.structure_pattern || '',
-                        exercises_count: 1
+                type: 'exercise',
+                title: '练习题 - ' + (data.structure_pattern || '') + ' (' + exercise.question.substring(0, 30) + ')',
+                    content: { structure_pattern: data.structure_pattern, exercises: [exercise] },
+                structure_pattern: data.structure_pattern || '',
+                exercises_count: 1
                     })
                 });
                 const result = await resp.json();
@@ -1145,9 +1865,9 @@ async def on_fetch(request, env):
                     html += '<div style="flex:1;cursor:pointer;" data-action="open-detail" data-id="' + e.id + '">';
                     html += '<div><strong>' + typeLabel + '</strong> ' + esc(e.title) + '</div>';
                     if (e.structure_pattern) {
-                        html += '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">';
-                        html += '<span style="display:inline-block;background:#667eea20;color:#667eea;font-size:11px;padding:1px 8px;border-radius:4px;border:1px solid #667eea40;">📐 ' + esc(e.structure_pattern) + '</span>';
-                        html += '</div>';
+                html += '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">';
+                html += '<span style="display:inline-block;background:#667eea20;color:#667eea;font-size:11px;padding:1px 8px;border-radius:4px;border:1px solid #667eea40;">📐 ' + esc(e.structure_pattern) + '</span>';
+                html += '</div>';
                     }
                     html += '<div style="font-size:12px;color:#888;margin-top:3px;">🕐 ' + time + '</div>';
                     html += '</div>';
@@ -1176,30 +1896,37 @@ async def on_fetch(request, env):
                 if (data.type === 'examples' && data.content && data.content.examples) {
                     bodyHtml += '<div style="margin-bottom:8px;"><strong>例句 (' + data.content.examples.length + ' 条):</strong></div>';
                     data.content.examples.forEach((ex, i) => {
-                        bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:6px;">';
-                        bodyHtml += '<div style="font-weight:600;">#' + (i+1) + ' ' + esc(ex.sentence) + '</div>';
-                        bodyHtml += '<div style="color:#888;font-size:13px;">' + esc(ex.translation) + '</div>';
-                        bodyHtml += '</div>';
+                bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:6px;">';
+                bodyHtml += '<div style="font-weight:600;">#' + (i+1) + ' ' + esc(ex.sentence) + '</div>';
+                bodyHtml += '<div style="color:#888;font-size:13px;">' + esc(ex.translation) + '</div>';
+                // 单条保存时有插图
+                    if (data.illustration_url && i === 0) {
+                bodyHtml += '<div style="margin-top:8px;border-radius:12px;overflow:hidden;border:2px solid #f3e5f5;">';
+                bodyHtml += '<img src="' + data.illustration_url + '" style="width:100%;display:block;" alt="插图">';
+                    if (data.illustration_model) bodyHtml += '<div style="font-size:11px;color:#999;text-align:center;padding:4px;background:#fafafa;">模型: ' + esc(data.illustration_model) + '</div>';
+                bodyHtml += '</div>';
+                }
+                bodyHtml += '</div>';
                     });
                     if (data.content.learning_tips) {
-                        bodyHtml += '<div style="padding:8px 10px;background:#fff8e1;border-radius:5px;margin-top:8px;">💡 ' + esc(data.content.learning_tips) + '</div>';
+                bodyHtml += '<div style="padding:8px 10px;background:#fff8e1;border-radius:5px;margin-top:8px;">💡 ' + esc(data.content.learning_tips) + '</div>';
                     }
                 } else if (data.type === 'exercises' && data.content && data.content.exercises) {
                     bodyHtml += '<div style="margin-bottom:8px;"><strong>练习题 (' + data.content.exercises.length + ' 题):</strong></div>';
                     data.content.exercises.forEach((ex, i) => {
-                        bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:8px;">';
-                        bodyHtml += '<div style="font-weight:600;margin-bottom:4px;">第 ' + (i+1) + ' 题: ' + esc(ex.question) + '</div>';
-                        if (ex.options) {
-                            const letters = ['A', 'B', 'C', 'D'];
-                            letters.forEach(letter => {
-                                if (ex.options[letter]) {
-                                    const mark = ex.answer === letter ? ' ✅' : '';
-                                    bodyHtml += '<div style="padding:2px 0;font-size:13px;">' + letter + '. ' + esc(ex.options[letter]) + mark + '</div>';
-                                }
-                            });
-                        }
-                        bodyHtml += '<div style="color:#2e7d32;font-size:13px;margin-top:3px;">✅ 答案: ' + ex.answer + ' — ' + esc(ex.explanation) + '</div>';
-                        bodyHtml += '</div>';
+                bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:8px;">';
+                bodyHtml += '<div style="font-weight:600;margin-bottom:4px;">第 ' + (i+1) + ' 题: ' + esc(ex.question) + '</div>';
+                    if (ex.options) {
+                const letters = ['A', 'B', 'C', 'D'];
+                letters.forEach(letter => {
+                    if (ex.options[letter]) {
+                const mark = ex.answer === letter ? ' ✅' : '';
+                bodyHtml += '<div style="padding:2px 0;font-size:13px;">' + letter + '. ' + esc(ex.options[letter]) + mark + '</div>';
+                }
+                });
+                }
+                bodyHtml += '<div style="color:#2e7d32;font-size:13px;margin-top:3px;">✅ 答案: ' + ex.answer + ' — ' + esc(ex.explanation) + '</div>';
+                bodyHtml += '</div>';
                     });
                 }
                 bodyHtml += '<div style="margin-top:12px;text-align:right;"><button class="btn btn-primary" data-action="close-detail" style="padding:8px 16px;">关闭</button></div>';
@@ -1244,7 +1971,7 @@ async def on_fetch(request, env):
                     tab.classList.add('active');
                     document.getElementById('tab-' + tab.dataset.tab).style.display = 'block';
                     if (tab.dataset.tab === 'knowledge') {
-                        loadKnowledgeBase();
+                loadKnowledgeBase();
                     }
                 });
             });
@@ -1273,12 +2000,14 @@ async def on_fetch(request, env):
             document.getElementById('detail-close-btn').addEventListener('click', closeKnowledgeDetail);
 
             // ── 事件委托：动态生成内容的点击处理 ──
-            // 例句区域：保存到知识库（全部或单条）
+            // 例句区域：保存到知识库、图文并茂
             document.getElementById('examples-result').addEventListener('click', function(e) {
                 const btn = e.target.closest('[data-action="save-examples"]');
                 if (btn) saveExamplesToKnowledge();
                 const single = e.target.closest('[data-action="save-example-single"]');
                 if (single) saveExampleToKnowledge(parseInt(single.getAttribute('data-index')));
+                const illBtn = e.target.closest('[data-action="illustrate-example"]');
+                if (illBtn) illustrateExample(parseInt(illBtn.getAttribute('data-index')));
             });
             // 练习题区域：保存到知识库（全部或单条）
             document.getElementById('exercises-result').addEventListener('click', function(e) {
@@ -1307,11 +2036,14 @@ async def on_fetch(request, env):
 </body>
 </html>"""
 
-        html_headers = Headers.new()
-        html_headers.set("Content-Type", "text/html; charset=utf-8")
-        for key, value in cors_headers.items():
-            html_headers.set(key, value)
-        return Response.new(html_content, status=200, headers=html_headers)
+            html_headers = Headers.new()
+            html_headers.set("Content-Type", "text/html; charset=utf-8")
+            for key, value in cors_headers.items():
+                html_headers.set(key, value)
+            return Response.new(html_content, status=200, headers=html_headers)
+
+        # 其他路径返回 404
+        return make_response({"error": "页面未找到", "hint": "访问 / 查看入口，/sentence 进入句子学习，/word 进入单词学习"}, 404, cors_headers)
 
     except Exception as e:
         return make_response({"error": str(e)}, 500, cors_headers)
