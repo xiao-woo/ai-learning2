@@ -743,10 +743,12 @@ async def on_fetch(request, env):
                 }, 200, cors_headers)
 
         # 返回 HTML 页面
-        return Response.new(get_html_page(), {
-            "status": 200,
-            "headers": {"Content-Type": "text/html; charset=utf-8", **cors_headers}
-        })
+        html_content = get_html_page()
+        html_headers = {
+            "Content-Type": "text/html; charset=utf-8",
+            **cors_headers
+        }
+        return Response.new(html_content, status=200, headers=html_headers)
 
     except Exception as e:
         return make_response({"error": str(e)}, 500, cors_headers)
