@@ -1893,7 +1893,7 @@ async def on_fetch(request, env):
                 document.getElementById('detail-title').textContent = data.type === 'examples' ? '✨ 例句详情' : '🎯 练习题详情';
                 let bodyHtml = '<div style="margin-bottom:10px;"><strong>标题:</strong> ' + esc(data.title || '') + '</div>';
                 bodyHtml += '<div style="margin-bottom:10px;"><strong>保存时间:</strong> ' + new Date(data.saved_at).toLocaleString('zh-CN') + '</div>';
-                if (data.type === 'examples' && data.content && data.content.examples) {
+                if ((data.type === 'examples' || data.type === 'example') && data.content && data.content.examples) {
                     bodyHtml += '<div style="margin-bottom:8px;"><strong>例句 (' + data.content.examples.length + ' 条):</strong></div>';
                     data.content.examples.forEach((ex, i) => {
                 bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:6px;">';
@@ -1911,7 +1911,7 @@ async def on_fetch(request, env):
                     if (data.content.learning_tips) {
                 bodyHtml += '<div style="padding:8px 10px;background:#fff8e1;border-radius:5px;margin-top:8px;">💡 ' + esc(data.content.learning_tips) + '</div>';
                     }
-                } else if (data.type === 'exercises' && data.content && data.content.exercises) {
+                } else if ((data.type === 'exercises' || data.type === 'exercise') && data.content && data.content.exercises) {
                     bodyHtml += '<div style="margin-bottom:8px;"><strong>练习题 (' + data.content.exercises.length + ' 题):</strong></div>';
                     data.content.exercises.forEach((ex, i) => {
                 bodyHtml += '<div style="padding:8px 10px;background:#f5f5ff;border-radius:5px;margin-bottom:8px;">';
