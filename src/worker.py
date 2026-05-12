@@ -1105,7 +1105,7 @@ async def on_fetch(request, env):
         # 句子学习系统页面 (/sentence)
         if len(path_parts) == 1 and path_parts[0] == "sentence":
             # 返回句子学习系统 HTML 页面
-        html_content = """<!DOCTYPE html>
+            html_content = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
