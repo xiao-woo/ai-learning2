@@ -8,6 +8,11 @@ compatibility_flags = ["python_workers"]
 [vars]
 API_KEY = "sk-9e6be88fab044f719313ce6bba59b759"
 
+# KV 命名空间 - 知识库存储
+[[kv_namespaces]]
+binding = "KNOWLEDGE_BASE"
+id = "e66ffc07f2904d8aa9bae9e78ae58e5d"
+
 # 开发环境
 [dev]
 port = 8787
