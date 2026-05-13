@@ -552,7 +552,7 @@ def get_html_page():
         // 生成记忆故事
         async function generateStory() {
             const wordsText = document.getElementById('story-words').value.trim();
-            const words = wordsText.split(/[,\s]+/).filter(w => w);
+            const words = wordsText.split(/[, \\s]+/).filter(w => w);
             
             if (words.length < 2) { alert('请输入至少2个单词'); return; }
             
@@ -588,7 +588,7 @@ def get_html_page():
             
             if (data.story) {
                 html += `<div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 15px 0; line-height: 1.8;">
-                    ${data.story.replace(/\*\*(\w+)\*\*/g, '<strong style="color: #667eea;">$1</strong>')}
+                    ${data.story.replace(/\\*\\*(\\w+)\\*\\*/g, '<strong style="color: #667eea;">$1</strong>')}
                 </div>`;
             }
             

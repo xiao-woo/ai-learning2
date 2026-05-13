@@ -800,10 +800,7 @@ def make_response(data, status=200, cors_headers=None):
             "Access-Control-Allow-Headers": "Content-Type",
         }
     body = json.dumps(data, ensure_ascii=False)
-    response_headers = Headers.new()
-    response_headers.set("Content-Type", "application/json")
-    for key, value in cors_headers.items():
-        response_headers.set(key, value)
+    response_headers = {"Content-Type": "application/json", **cors_headers}
     return Response.new(body, status=status, headers=response_headers)
 
 
@@ -895,9 +892,7 @@ async def on_fetch(request, env):
 
     # 处理 CORS preflight
     if request.method == "OPTIONS":
-        options_headers = Headers.new()
-        for key, value in cors_headers.items():
-            options_headers.set(key, value)
+        options_headers = {**cors_headers}
         return Response.new(None, status=204, headers=options_headers)
 
     try:
@@ -1096,10 +1091,7 @@ async def on_fetch(request, env):
     </div>
 </body>
 </html>"""
-            html_headers = Headers.new()
-            html_headers.set("Content-Type", "text/html; charset=utf-8")
-            for key, value in cors_headers.items():
-                html_headers.set(key, value)
+            html_headers = {"Content-Type": "text/html; charset=utf-8", **cors_headers}
             return Response.new(index_html, status=200, headers=html_headers)
 
         # 句子学习系统页面 (/sentence)
@@ -2037,10 +2029,7 @@ async def on_fetch(request, env):
 </body>
 </html>"""
 
-            html_headers = Headers.new()
-            html_headers.set("Content-Type", "text/html; charset=utf-8")
-            for key, value in cors_headers.items():
-                html_headers.set(key, value)
+            html_headers = {"Content-Type": "text/html; charset=utf-8", **cors_headers}
             return Response.new(html_content, status=200, headers=html_headers)
 
         # 其他路径返回 404
